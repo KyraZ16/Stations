@@ -388,7 +388,7 @@ public sealed partial class Game
         foreach (var d in Depots.Values.ToList())
         {
             if (depotId != null && d.Id != depotId) continue;
-            foreach (var role in new[] { StaffRole.Driver, StaffRole.Mechanic, StaffRole.Cleaner })
+            foreach (var role in new[] { StaffRole.Driver, StaffRole.Mechanic, StaffRole.Cleaner, StaffRole.Service })
             {
                 int have = role == StaffRole.Driver ? DriversOf(d.Id).Count : WorkersOf(d.Id, role).Count;
                 int missing = Math.Min(WorkerDemand(d.Id, role) - have, d.Layout.DriverCapacity() - StaffCount(d.Id));
@@ -404,6 +404,6 @@ public sealed partial class Game
 
     /// <summary>Staff still missing at a depot compared to the suggestion (all roles).</summary>
     public int MissingStaff(int depotId) =>
-        new[] { StaffRole.Driver, StaffRole.Mechanic, StaffRole.Cleaner }.Sum(r =>
+        new[] { StaffRole.Driver, StaffRole.Mechanic, StaffRole.Cleaner, StaffRole.Service }.Sum(r =>
             Math.Max(0, WorkerDemand(depotId, r) - (r == StaffRole.Driver ? DriversOf(depotId).Count : WorkersOf(depotId, r).Count)));
 }

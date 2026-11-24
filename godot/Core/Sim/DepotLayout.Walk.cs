@@ -68,6 +68,46 @@ public sealed class OfficePlan
     }
 }
 
+/// <summary>
+/// Interior of a customer center in local meters (door in the middle of the +z wall): counters along the
+/// back wall with the service desk behind them, rows of waiting chairs facing the counters, a ticket machine.
+/// </summary>
+public sealed class ServicePlan
+{
+    public double HalfX, HalfZ;
+    /// <summary>Counter positions (x); staff stand at StaffZ, customers at CustomerZ.</summary>
+    public readonly List<double> Counters = new();
+    public double CounterZ, StaffZ, CustomerZ;
+    public readonly List<(double X, double Z)> Seats = new();
+    /// <summary>Standing room in the queue when all chairs are taken.</summary>
+    public readonly List<(double X, double Z)> Standing = new();
+    public (double X, double Z) Machine;
+
+    public static ServicePlan Create(double halfX, double halfZ)
+    {
+        var p = new ServicePlan { HalfX = halfX, HalfZ = halfZ };
+        double span = 2 * halfX - 0.6;
+        int n = Math.Clamp((int)(span / 3.0), 1, 8);
+        for (int i = 0; i < n; i++) p.Counters.Add(-halfX + 0.3 + span * (i + 0.5) / n);
+        p.StaffZ = -halfZ + 0.55;
+        p.CounterZ = -halfZ + 1.05;
+        p.CustomerZ = -halfZ + 1.65;
+        for (double z = p.CustomerZ + 1.4; z <= halfZ - 1.5; z += 1.1)
+            for (double x = -halfX + 0.6; x <= halfX - 0.6; x += 0.7)
+                if (Math.Abs(x) > 0.8) p.Seats.Add((x, z));
+        // About six chairs per counter, the rows nearest to the counters first
+        int keep = Math.Max(6, p.Counters.Count * 6);
+        var nearest = p.Seats.OrderBy(q => q.Z).ThenBy(q => Math.Abs(q.X)).Take(keep).ToList();
+        p.Seats.Clear();
+        p.Seats.AddRange(nearest);
+        p.Machine = (halfX - 0.45, halfZ - 1.3);
+        for (double x = -halfX + 0.8; x <= halfX - 1.2; x += 0.9)
+            if (Math.Abs(x) > 0.9) p.Standing.Add((x, halfZ - 0.8));
+        if (p.Standing.Count == 0) p.Standing.Add((0, halfZ - 1.0));
+        return p;
+    }
+}
+
 public sealed partial class DepotLayout
 {
     /// <summary>Cells people can walk on: empty ground, driveways, parking spots, open halls.</summary>
@@ -75,7 +115,7 @@ public sealed partial class DepotLayout
     {
         if (x < 0 || y < 0 || x >= Width || y >= Height) return false;
         var m = ModuleAt(x, y);
-        return m == null || m.Type is not (ModuleType.Office or ModuleType.Charger);
+        return m == null || m.Type is not (ModuleType.Office or ModuleType.Charger or ModuleType.ServiceCenter);
     }
 
     /// <summary>Closest walkable cell (breadth-first from the cell itself).</summary>
@@ -167,6 +207,13 @@ public sealed partial class DepotLayout
     {
         double hw = m.W * CellSize / 2 - OfficePlan.Margin, hh = m.H * CellSize / 2 - OfficePlan.Margin;
         return door.X != 0 ? OfficePlan.Create(hh, hw) : OfficePlan.Create(hw, hh);
+    }
+
+    /// <summary>Interior of a customer center whose door faces the given way.</summary>
+    public static ServicePlan ServicePlanFor(PlacedModule m, (int X, int Y) door)
+    {
+        double hw = m.W * CellSize / 2 - OfficePlan.Margin, hh = m.H * CellSize / 2 - OfficePlan.Margin;
+        return door.X != 0 ? ServicePlan.Create(hh, hw) : ServicePlan.Create(hw, hh);
     }
 
     /// <summary>Office-local point (x across, z toward the door) in yard meters.</summary>

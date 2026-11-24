@@ -25,6 +25,8 @@ public sealed class Depot
     public int Repairing, Washing, Charging, Workshops, WashBays, Chargers;
     /// <summary>Workshop lanes / wash bays with someone on duty right now; staff on the grounds.</summary>
     public int LanesStaffed, WashStaffed, OnSite;
+    /// <summary>Customer center: counters with staff at work, customers waiting, served and lost today.</summary>
+    public int CountersOpen, Counters, Queue, ServedToday, LostToday;
 }
 
 /// <summary>One direction of a line: a path through an ordered list of stops.</summary>
@@ -72,7 +74,8 @@ public sealed class Driver
     public int? VehicleId;
 }
 
-public enum StaffRole { Driver, Mechanic, Cleaner }
+/// <summary>Who a person on the depot grounds is: staff, or a customer of the customer center.</summary>
+public enum StaffRole { Driver, Mechanic, Cleaner, Service, Customer }
 
 /// <summary>Work shifts of yard staff: early 06–14, late 14–22, night 22–06.</summary>
 public enum ShiftId { Early, Late, Night }
@@ -98,7 +101,7 @@ public enum PersonAct
 }
 
 /// <summary>Where a walking person is heading.</summary>
-public enum PersonGoal { None, Locker, Seat, Vehicle, Post, Clean, Gate }
+public enum PersonGoal { None, Locker, Seat, Vehicle, Post, Clean, Gate, Queue, Counter }
 
 /// <summary>
 /// A member of staff who is on the depot grounds right now (runtime only, rebuilt after loading).
@@ -226,5 +229,7 @@ public sealed class DayStats
     public int Lost { get; set; } // gave up waiting
     public double Revenue { get; set; }
     public double Costs { get; set; }
+    public int Customers { get; set; } // served at a customer center
+    public int CustomersLost { get; set; } // left the customer center after waiting too long
     public double WaitSum { get; set; }
 }

@@ -61,7 +61,8 @@ public partial class Main : Node
                 game.PlaceModule(d0, Core.Sim.ModuleType.LongBusSpot, 18, 0, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Charger, 17, 6, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Office, 7, 8, 0, 4, 4); // drawn: 48 staff places
-                game.HireMissingDrivers(d0.Id); // mechanics and cleaners for the new workshop and wash
+                game.PlaceModule(d0, Core.Sim.ModuleType.ServiceCenter, 13, 11, 0, 4, 3);
+                game.HireMissingDrivers(d0.Id); // mechanics, cleaners and service staff for the new buildings
                 foreach (var v in game.Vehicles.Values.Where(v => v.DepotId == d0.Id && v.State == VehicleState.Depot).Take(3))
                 {
                     v.Condition = 0.55; // something for the workshop and the wash to do

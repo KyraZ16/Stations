@@ -98,6 +98,8 @@ public sealed partial class Game
     private void NewDay()
     {
         History.Add(Today);
+        Subscribers *= 29.0 / 30; // monthly passes run out after about a month
+        foreach (var d in Depots.Values) d.ServedToday = d.LostToday = 0;
         if (History.Count > 60) History.RemoveAt(0);
         Today = new DayStats { Day = Day };
         foreach (var l in Lines.Values)
@@ -112,7 +114,7 @@ public sealed partial class Game
     {
         var R = Router;
         if (R == null || R.CoveredRes <= 0 || R.CoveredJobs <= 0) return;
-        _demandAcc += R.CoveredRes * TripsPerResident / 86400 * DemandFactor(Time) * dt;
+        _demandAcc += R.CoveredRes * TripsPerResident / 86400 * DemandFactor(Time) * dt * (1 + AboBoost);
         double destShare = R.CoveredJobs / Math.Max(Map.TotalJobs, 1);
         var cells = Map.Cells;
         while (_demandAcc >= 1)
@@ -379,6 +381,7 @@ public sealed partial class Game
                         v.Passengers.Add(p);
                         stop.BoardedToday++;
                         Today.Boardings++;
+                        CustomerDemand();
                         Today.WaitSum += Time - p.WaitingSince;
                         line.PassengersToday++;
                         if (p.LegIdx == 0)

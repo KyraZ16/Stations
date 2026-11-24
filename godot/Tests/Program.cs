@@ -301,5 +301,34 @@ Check(pRestored.Workers.Count == pg.Workers.Count && pRestored.Workers.Values.Al
 pRestored.Advance(2);
 Check(pRestored.People.Count > 0, "nach dem Laden ist das Personal wieder da");
 
+Console.WriteLine("== Kundencenter");
+(int Served, int Lost, double Subs, Game G) RunCenterDay(bool staff)
+{
+    var cg = new Game(map, sandbox: true, seed: 12);
+    DemoNetwork.Build(cg);
+    var cd = cg.Depots.Values.First(d => d.Mode == ModeId.Bus);
+    string? err = cg.PlaceModule(cd, ModuleType.ServiceCenter, 8, 11, 0, 3, 3);
+    if (err != null) Console.WriteLine($"  Kundencenter nicht gebaut: {err}");
+    if (staff)
+    {
+        cg.PlaceModule(cd, ModuleType.Office, 16, 10, 0, 3, 3); // places for the service staff
+        cg.HireWorkers(cd.Id, StaffRole.Service, cg.WorkerDemand(cd.Id, StaffRole.Service));
+    }
+    cg.Advance(86400);
+    var day = cg.History.Last();
+    return (day.Customers + cg.Today.Customers, day.CustomersLost + cg.Today.CustomersLost, cg.Subscribers, cg);
+}
+var withStaff = RunCenterDay(true);
+var noStaff = RunCenterDay(false);
+Console.WriteLine($"  mit Servicekräften: {withStaff.Served} bedient, {withStaff.Lost} gegangen, {withStaff.Subs:F0} Abos");
+Console.WriteLine($"  ohne Servicekräfte: {noStaff.Served} bedient, {noStaff.Lost} gegangen");
+Check(withStaff.G.WorkersOf(withStaff.G.Depots.Values.First(d => d.Mode == ModeId.Bus).Id, StaffRole.Service).All(w => w.Shift != ShiftId.Night),
+    "Servicekräfte nur in Früh- und Spätschicht");
+Check(withStaff.Served > 5 && withStaff.Subs > 5, "Kundencenter verkauft Abos");
+Check(noStaff.Served == 0 && noStaff.Lost > 0, "ohne Servicekräfte gehen die Kunden wieder");
+Check(withStaff.G.AboBoost > 0, $"Abos bringen mehr Fahrgäste (+{withStaff.G.AboBoost:P1})");
+var sRestored = Game.Restore(map, SaveData.FromJson(withStaff.G.Serialize().ToJson()));
+Check(Math.Abs(sRestored.Subscribers - withStaff.G.Subscribers) < 1e-6, "Abos werden gespeichert");
+
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

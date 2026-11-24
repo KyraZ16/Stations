@@ -331,6 +331,81 @@ public sealed class Props
     }
 
     /// <summary>
+    /// Customer center (any size, door in the middle of the local +Z wall): glass front, a colored band with
+    /// the company color, counters with screens along the back wall, rows of waiting chairs, ticket machine.
+    /// Ceiling and roof go into <paramref name="upper"/> for the interior view.
+    /// </summary>
+    public Node3D ServiceCenter(ServicePlan plan, float height, out Node3D upper)
+    {
+        var n = new Node3D();
+        upper = new Node3D();
+        n.AddChild(upper);
+        float hx = (float)plan.HalfX, hz = (float)plan.HalfZ, wh = height - 0.6f, t = 0.2f, door = 1.8f;
+        var wall = Solid("ece8e0", 0.8f);
+        var accent = Solid("c8102e", 0.5f);
+        Box(n, new Vector3(0, 0.05f, 0), new Vector3(hx * 2, 0.1f, hz * 2), Solid("d9d6cf", 0.4f), shadow: false);
+        Box(n, new Vector3(0, wh / 2, -hz + t / 2), new Vector3(hx * 2, wh, t), wall);
+        foreach (int sgn in new[] { -1, 1 })
+            Box(n, new Vector3(sgn * (hx - t / 2), wh / 2, 0), new Vector3(t, wh, hz * 2), wall);
+        // Glass front with the door gap, a low parapet under the glass
+        float seg = hx - door / 2;
+        foreach (int sgn in new[] { -1, 1 })
+        {
+            Box(n, new Vector3(sgn * (door / 2 + seg / 2), 0.3f, hz - t / 2), new Vector3(seg, 0.6f, t), wall);
+            Box(n, new Vector3(sgn * (door / 2 + seg / 2), 0.6f + (wh - 0.6f) / 2, hz - 0.05f), new Vector3(seg, wh - 0.6f, 0.06f), Glass, shadow: false);
+            Box(n, new Vector3(sgn * (hx - 0.05f), wh / 2, hz - 0.05f), new Vector3(0.12f, wh, 0.12f), DarkSteel);
+        }
+        Box(n, new Vector3(0, wh - 0.3f, hz - 0.05f), new Vector3(door, 0.6f, 0.12f), DarkSteel); // above the door
+        // Side windows
+        foreach (int sgn in new[] { -1, 1 })
+            Box(n, new Vector3(sgn * (hx + 0.02f), wh * 0.55f, 0), new Vector3(0.04f, wh * 0.5f, hz * 1.4f), Window, shadow: false);
+
+        // Counters with screens and chairs behind them
+        var desk = Solid("f4f1ea", 0.4f);
+        foreach (double cx in plan.Counters)
+        {
+            float x = (float)cx;
+            Box(n, new Vector3(x, 0.55f, (float)plan.CounterZ), new Vector3(1.9f, 1.1f, 0.6f), desk);
+            Box(n, new Vector3(x, 1.12f, (float)plan.CounterZ), new Vector3(1.95f, 0.05f, 0.7f), accent);
+            Box(n, new Vector3(x, 1.4f, (float)plan.CounterZ - 0.1f), new Vector3(0.5f, 0.34f, 0.04f), Display, shadow: false);
+            Box(n, new Vector3(x, 0.45f, (float)plan.StaffZ - 0.1f), new Vector3(0.45f, 0.06f, 0.45f), Solid("3b3f46", 0.6f));
+            Box(n, new Vector3(x, wh - 0.6f, (float)plan.CounterZ), new Vector3(0.7f, 0.3f, 0.05f), ChargerScreen, shadow: false); // counter number sign
+        }
+        // Waiting chairs facing the counters
+        var chair = Solid("c8102e", 0.6f);
+        foreach (var (sx, sz) in plan.Seats)
+        {
+            Box(n, new Vector3((float)sx, 0.45f, (float)sz), new Vector3(0.48f, 0.06f, 0.45f), chair);
+            Box(n, new Vector3((float)sx, 0.72f, (float)sz + 0.22f), new Vector3(0.48f, 0.5f, 0.05f), chair);
+            Box(n, new Vector3((float)sx, 0.22f, (float)sz), new Vector3(0.05f, 0.44f, 0.05f), Steel, shadow: false);
+        }
+        // Ticket machine, info screen, plants
+        var (mx, mz) = plan.Machine;
+        Box(n, new Vector3((float)mx, 0.85f, (float)mz), new Vector3(0.5f, 1.7f, 0.6f), accent);
+        Box(n, new Vector3((float)mx - 0.26f, 1.2f, (float)mz), new Vector3(0.02f, 0.4f, 0.35f), Display, shadow: false);
+        Box(n, new Vector3(0, 2.1f, -hz + t + 0.03f), new Vector3(Math.Min(3, hx), 0.8f, 0.04f), Display, shadow: false);
+        foreach (int sgn in new[] { -1, 1 })
+        {
+            Cylinder(n, new Vector3(sgn * (hx - 0.5f), 0.3f, hz - 0.5f), 0.25f, 0.6f, Solid("8a8378", 0.8f), segments: 10);
+            var leaves = new MeshInstance3D
+            {
+                Mesh = new SphereMesh { Radius = 0.4f, Height = 0.8f, RadialSegments = 8, Rings = 4 },
+                Position = new Vector3(sgn * (hx - 0.5f), 0.95f, hz - 0.5f), MaterialOverride = Solid("4f7d3a", 0.9f),
+            };
+            n.AddChild(leaves);
+        }
+
+        // Ceiling, roof with the company band and a sign over the door
+        Box(upper, new Vector3(0, wh + 0.1f, 0), new Vector3(hx * 2, 0.2f, hz * 2), Solid("e2ded6", 0.9f));
+        foreach (double cx in plan.Counters)
+            Box(upper, new Vector3((float)cx, wh - 0.02f, (float)plan.CounterZ + 0.8f), new Vector3(1.4f, 0.04f, 0.3f), HallLight, shadow: false);
+        Box(upper, new Vector3(0, wh + 0.3f, 0), new Vector3(hx * 2 + 0.3f, 0.6f, hz * 2 + 0.3f), accent);
+        Box(upper, new Vector3(0, height + 0.05f, 0), new Vector3(hx * 2 + 0.1f, 0.1f, hz * 2 + 0.1f), Solid("7d766c"));
+        Box(n, new Vector3(0, wh + 0.3f, hz + 0.2f), new Vector3(Math.Min(4.5f, hx * 1.6f), 0.5f, 0.08f), Lit("svcsign", new Color("ffffff"), 0.6f, 2.5f), shadow: false);
+        return n;
+    }
+
+    /// <summary>
     /// Open steel hall (workshop or wash bay) with any number of lanes, two cells apart, so vehicles inside
     /// stay visible. Workshops get two-post lifts and pits per lane, wash bays a pair of brushes per lane.
     /// </summary>
@@ -488,8 +563,18 @@ public sealed class Props
     public Figure Person(StaffRole role, int seed)
     {
         var rng = new Random(seed);
-        string shirt = role switch { StaffRole.Driver => "8fb4d9", StaffRole.Mechanic => "e07a1f", _ => "3b9b5a" };
-        string legs = role switch { StaffRole.Driver => "2b3442", StaffRole.Mechanic => "d06d17", _ => "565b62" };
+        string[] casualTops = { "5b8def", "e0b84a", "9a4fb0", "4fa37a", "d9d4c7", "333840", "c4564e", "7fb8c9" };
+        string[] casualLegs = { "34495e", "2f3542", "6b5b4b", "3f5f8a", "1f1f24" };
+        string shirt = role switch
+        {
+            StaffRole.Driver => "8fb4d9", StaffRole.Mechanic => "e07a1f", StaffRole.Cleaner => "3b9b5a", StaffRole.Service => "c8102e",
+            _ => casualTops[rng.Next(casualTops.Length)],
+        };
+        string legs = role switch
+        {
+            StaffRole.Driver => "2b3442", StaffRole.Mechanic => "d06d17", StaffRole.Cleaner => "565b62", StaffRole.Service => "2b2d33",
+            _ => casualLegs[rng.Next(casualLegs.Length)],
+        };
         string[] skins = { "f1c7a5", "d9a27e", "a86f4c", "7b4a2e", "f4d3b8" };
         string[] hairs = { "2b2118", "5a3b22", "a8763e", "1a1a1a", "8f8a84", "c49a5a" };
         var root = new Node3D();
@@ -525,6 +610,9 @@ public sealed class Props
             Position = new Vector3(-0.01f, 1.71f, 0), MaterialOverride = Solid(hairs[rng.Next(hairs.Length)], 0.9f),
         };
         body.AddChild(hair);
+        if (role == StaffRole.Service) Box(body, new Vector3(0.135f, 1.32f, -0.12f), new Vector3(0.01f, 0.08f, 0.1f), Solid("f2f2ee", 0.5f)); // name badge
+        if (role == StaffRole.Customer && rng.Next(3) == 0)
+            Box(body, new Vector3(-0.05f, 0.95f, 0.3f), new Vector3(0.3f, 0.35f, 0.1f), Solid(rng.Next(2) == 0 ? "6b4a32" : "2f3542", 0.8f)); // bag
         if (role == StaffRole.Driver && rng.Next(3) == 0)
             Box(body, new Vector3(0, 1.8f, 0), new Vector3(0.26f, 0.06f, 0.24f), Solid("1f3b70", 0.6f)); // cap
         return new Figure { Root = root, Body = body, LegL = legL, LegR = legR, ArmL = armL, ArmR = armR };

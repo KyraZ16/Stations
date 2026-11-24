@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Stations.Core.Sim;
 
-public enum ModuleType { Road, BusSpot, TramSpot, Office, Workshop, Wash, LongBusSpot, Charger }
+public enum ModuleType { Road, BusSpot, TramSpot, Office, Workshop, Wash, LongBusSpot, Charger, ServiceCenter }
 
 public sealed record ModuleDef(
     ModuleType Type,
@@ -61,6 +61,8 @@ public sealed partial class DepotLayout
         [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 153_000, 7, "d9cbb0", $"Frei aufziehbar (ab 2×2): {StaffPerCell} Mitarbeiter je Feld (3×3 = {DriversPerOffice}), Umkleide und Pausenraum wachsen mit"),
         [ModuleType.Workshop] = new(ModuleType.Workshop, "Werkstatt", 4, 6, 408_000, 9, "9fb3c8", "Frei aufziehbar (ab 2×6): je 2 Felder Breite eine Spur, je Spur ein Mechaniker im Dienst (+25 % Zustand pro Stunde)"),
         [ModuleType.Wash] = new(ModuleType.Wash, "Waschanlage", 2, 6, 120_000, 5, "a8d0d8", "Frei aufziehbar (ab 2×6): je 2 Felder Breite eine Waschstraße, je Straße eine Reinigungskraft im Dienst (15 min pro Wäsche)"),
+        [ModuleType.ServiceCenter] = new(ModuleType.ServiceCenter, "Kundencenter", 3, 3, 180_000, 4.6, "e9e4dc",
+            "Frei aufziehbar (ab 3×3): Schalter für Abos, geöffnet 06–22 Uhr. Je Schalter eine Servicekraft im Dienst; Abos bringen Einnahmen und mehr Fahrgäste"),
         [ModuleType.Charger] = new(ModuleType.Charger, "Ladestation", 1, 1, 60_000, 2.2, "3fae6a", "Direkt neben einen Stellplatz bauen: lädt den E-Bus dort (voll in 3 Stunden)"),
     };
 
@@ -78,7 +80,10 @@ public sealed partial class DepotLayout
     public PlacedModule? ModuleAt(int x, int y) => Modules.FirstOrDefault(m => m.Covers(x, y));
 
     /// <summary>Buildings that are drawn as a rectangle of any size.</summary>
-    public static bool IsDrawable(ModuleType t) => t is ModuleType.Office or ModuleType.Workshop or ModuleType.Wash;
+    public static bool IsDrawable(ModuleType t) => t is ModuleType.Office or ModuleType.Workshop or ModuleType.Wash or ModuleType.ServiceCenter;
+
+    /// <summary>Closed buildings people enter through a door (offices, customer centers).</summary>
+    public static bool HasDoor(ModuleType t) => t is ModuleType.Office or ModuleType.ServiceCenter;
 
     /// <summary>Why a building cannot have this size (cells), or null.</summary>
     public static string? SizeError(ModuleType t, int w, int h)
@@ -88,6 +93,7 @@ public sealed partial class DepotLayout
         return t switch
         {
             ModuleType.Office when s < 2 => "Ein Sozialgebäude braucht mindestens 2×2 Felder",
+            ModuleType.ServiceCenter when s < 3 => "Ein Kundencenter braucht mindestens 3×3 Felder",
             ModuleType.Workshop or ModuleType.Wash when s < 2 || l < 6 => $"Eine {Def(t).Name} braucht mindestens 2×6 Felder",
             _ => null,
         };
@@ -117,6 +123,7 @@ public sealed partial class DepotLayout
             ModuleType.Office => $"{size}: {OfficeCapacity(w, h)} Mitarbeiter, {OfficePlan.Create(w * CellSize / 2 - 0.4, h * CellSize / 2 - 0.4).Seats.Count} Sitzplätze",
             ModuleType.Workshop => $"{size}: {LaneCount(w, h)} Spur(en)",
             ModuleType.Wash => $"{size}: {LaneCount(w, h)} Waschstraße(n)",
+            ModuleType.ServiceCenter => $"{size}: {ServicePlan.Create(Math.Max(w, h) * CellSize / 2 - 0.4, Math.Min(w, h) * CellSize / 2 - 0.4).Counters.Count} Schalter",
             _ => size,
         };
     }

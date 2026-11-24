@@ -335,6 +335,16 @@ public partial class DepotEditor : Node3D
                     _roofs.Add(upper);
                     break;
                 }
+                case ModuleType.ServiceCenter:
+                {
+                    var door = L.OfficeDoor(m, reach).Dir;
+                    var sc = _props.ServiceCenter(DepotLayout.ServicePlanFor(m, door), (float)def.Height, out var upper);
+                    sc.Position = ground;
+                    sc.Rotation = new Vector3(0, Mathf.Atan2(door.X, door.Y), 0);
+                    node.AddChild(sc);
+                    _roofs.Add(upper);
+                    break;
+                }
                 case ModuleType.Workshop or ModuleType.Wash:
                 {
                     bool wash = m.Type == ModuleType.Wash;
@@ -375,7 +385,7 @@ public partial class DepotEditor : Node3D
                     break;
                 }
             }
-            if (m.Type is ModuleType.Office or ModuleType.Workshop or ModuleType.Wash)
+            if (m.Type is ModuleType.Office or ModuleType.Workshop or ModuleType.Wash or ModuleType.ServiceCenter)
             {
                 var label = new Label3D
                 {
@@ -475,7 +485,7 @@ public partial class DepotEditor : Node3D
             f.Root.Rotation = new Vector3(0, yaw, 0);
 
             bool walking = p.Act == PersonAct.Walking;
-            bool seated = p.Act == PersonAct.Resting && p.Seat >= 0 && p.Office != null;
+            bool seated = p.Act is PersonAct.Resting or PersonAct.Waiting && p.Seat >= 0 && p.Office != null;
             float swing = walking ? Mathf.Sin((float)(p.Walked * Mathf.Tau / 1.5)) * 0.5f : 0;
             float legs = seated ? 1.45f : swing;
             float arms = p.Act switch
@@ -524,6 +534,17 @@ public partial class DepotEditor : Node3D
 
     private string PersonInfo(Person p)
     {
+        if (p.Role == StaffRole.Customer)
+        {
+            string doing = p.Goal == PersonGoal.Gate ? "geht wieder" : p.Act switch
+            {
+                PersonAct.Walking => p.Goal == PersonGoal.Counter ? "wird aufgerufen" : "kommt ins Kundencenter",
+                PersonAct.Working => "am Schalter: kauft ein Abo",
+                PersonAct.Waiting => $"wartet seit {Math.Max(0, (Game.MaxCustomerWait - (p.Until - Game.Time)) / 60):F0} min",
+                _ => "",
+            };
+            return $"Kunde\n{doing}";
+        }
         string name = Game.Drivers.TryGetValue(p.Id, out var d) ? d.Name : Game.Workers.TryGetValue(p.Id, out var w) ? w.Name : "?";
         string role = Game.RoleName(p.Role);
         string shift = Game.Workers.TryGetValue(p.Id, out var ww) ? $" · {Game.ShiftName(ww.Shift)}" : "";
@@ -536,13 +557,23 @@ public partial class DepotEditor : Node3D
                 PersonGoal.Locker => leaving ? "Feierabend: zur Umkleide" : "Dienstbeginn: zur Umkleide",
                 PersonGoal.Seat => "geht in den Pausenraum",
                 PersonGoal.Vehicle => $"geht zu {vehicle}",
-                PersonGoal.Post => p.Role == StaffRole.Mechanic ? "geht an die Arbeit (Werkstatt)" : "geht zur Waschanlage",
+                PersonGoal.Post => p.Role switch
+                {
+                    StaffRole.Mechanic => "geht an die Arbeit (Werkstatt)",
+                    StaffRole.Service => "geht an den Schalter",
+                    _ => "geht zur Waschanlage",
+                },
                 PersonGoal.Clean => $"geht {vehicle} reinigen",
                 PersonGoal.Gate => "geht nach Hause",
                 _ => "unterwegs",
             },
             PersonAct.Changing => leaving ? "zieht sich um (Feierabend)" : "zieht sich um",
-            PersonAct.Working => p.Role == StaffRole.Mechanic ? "repariert" : p.Post != null ? "bedient die Waschanlage" : $"reinigt {vehicle}",
+            PersonAct.Working => p.Role switch
+            {
+                StaffRole.Mechanic => "repariert",
+                StaffRole.Service => "am Schalter",
+                _ => p.Post != null ? "bedient die Waschanlage" : $"reinigt {vehicle}",
+            },
             PersonAct.Waiting => "wartet auf das nächste Fahrzeug",
             _ => p.Office != null ? "Pause im Sozialgebäude" : "wartet",
         };
@@ -815,9 +846,9 @@ public partial class DepotEditor : Node3D
         foreach (var c in _palette.GetChildren()) c.QueueFree();
         _palette.AddChild(Ui.Section("Bauen"));
         var types = Depot.Mode == ModeId.Tram
-            ? new List<ModuleType> { ModuleType.Road, ModuleType.TramSpot, ModuleType.Office, ModuleType.Workshop, ModuleType.Wash }
+            ? new List<ModuleType> { ModuleType.Road, ModuleType.TramSpot, ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter }
             : new List<ModuleType> { ModuleType.Road, ModuleType.BusSpot, ModuleType.LongBusSpot, ModuleType.Charger,
-                ModuleType.Office, ModuleType.Workshop, ModuleType.Wash };
+                ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter };
         foreach (var t in types)
         {
             var def = DepotLayout.Def(t);
@@ -873,9 +904,11 @@ public partial class DepotEditor : Node3D
         int drivers = Game.DriversOf(Depot.Id).Count;
         int staff = Game.StaffCount(Depot.Id);
         int mech = Game.WorkersOf(Depot.Id, StaffRole.Mechanic).Count, clean = Game.WorkersOf(Depot.Id, StaffRole.Cleaner).Count;
+        int svc = Game.WorkersOf(Depot.Id, StaffRole.Service).Count;
         string spot = Depot.Mode == ModeId.Tram ? "Abstellgleise" : "Stellplätze";
         string service = $"Werkstatt: {Depot.Repairing}   ·   Wäsche: {Depot.Washing}" + (Depot.Chargers > 0 ? $"   ·   Laden: {Depot.Charging}" : "");
         _stats.Text = $"{spot}: {vehicles} / {L.VehicleCapacity(Depot.Mode)} belegt ({home} im Hof)   ·   " +
-                      $"Personal: {staff} / {L.DriverCapacity()} ({drivers} Fahrer, {mech} Mechaniker, {clean} Reinigung; {Depot.OnSite} vor Ort)   ·   {service}   ·   {Util.Money(Game.Money)}";
+                      $"Personal: {staff} / {L.DriverCapacity()} ({drivers} Fahrer, {mech} Mechaniker, {clean} Reinigung, {svc} Service; {Depot.OnSite} vor Ort)   ·   {service}" +
+                      (Depot.Counters > 0 ? $"   ·   Kunden: {Depot.Queue} warten, {Depot.ServedToday} bedient" : "") + $"   ·   {Util.Money(Game.Money)}";
     }
 }

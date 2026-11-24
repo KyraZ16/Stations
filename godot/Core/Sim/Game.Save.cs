@@ -24,6 +24,8 @@ public sealed class SaveData
     /// <summary>Midpoints of road segments with tram track.</summary>
     public List<double[]>? Tracks { get; set; }
     public List<DayStats> History { get; set; } = new();
+    /// <summary>Monthly passes in circulation (sold at customer centers).</summary>
+    public double Subscribers { get; set; }
 
     public sealed class PlacedDto
     {
@@ -128,6 +130,7 @@ public sealed partial class Game
                 Math.Round((g.Vy[g.SegA[s]] + g.Vy[g.SegB[s]]) / 2, 1),
             }).ToList(),
             History = History.ToList(),
+            Subscribers = Subscribers,
         };
     }
 
@@ -139,6 +142,7 @@ public sealed partial class Game
             _nextId = data.NextId,
             _vehicleCounter = data.VehicleCounter,
             History = data.History ?? new(),
+            Subscribers = data.Subscribers,
         };
         g.Today = new DayStats { Day = g.Day };
         var graph = map.Graph;

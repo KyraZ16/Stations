@@ -76,8 +76,8 @@ public sealed partial class Game
         if (!Pay(WorkerHireCost * n)) return;
         for (int i = 0; i < n; i++)
         {
-            // Fill the shift with the fewest people of this role
-            var shift = Enum.GetValues<ShiftId>().OrderBy(s => Workers.Values.Count(w => w.DepotId == depotId && w.Role == role && w.Shift == s)).First();
+            // Fill the shift with the fewest people of this role (the customer center has no night shift)
+            var shift = Enum.GetValues<ShiftId>().Where(s => role != StaffRole.Service || s != ShiftId.Night).OrderBy(s => Workers.Values.Count(w => w.DepotId == depotId && w.Role == role && w.Shift == s)).First();
             int id = _nextId++;
             Workers[id] = new Worker { Id = id, Name = Staff.RandomName(Rng), DepotId = depotId, Role = role, Shift = shift };
         }
@@ -109,6 +109,7 @@ public sealed partial class Game
         if (!Depots.TryGetValue(depotId, out var d)) return 0;
         var y = Yard(d);
         if (role == StaffRole.Mechanic) return y.Lanes.Count * 3;
+        if (role == StaffRole.Service) return y.Counters.Count * 2; // early and late shift
         int vehicles = Vehicles.Values.Count(v => v.DepotId == depotId);
         return y.Washes.Count * 3 + (int)Math.Ceiling(vehicles / 15.0);
     }
@@ -121,7 +122,7 @@ public sealed partial class Game
         if (_peopleTimer >= PeopleInterval)
         {
             _peopleTimer = 0;
-            foreach (var id in People.Keys.Where(id => !Drivers.ContainsKey(id) && !Workers.ContainsKey(id)).ToList()) People.Remove(id);
+            foreach (var id in People.Keys.Where(id => id >= 0 && !Drivers.ContainsKey(id) && !Workers.ContainsKey(id)).ToList()) People.Remove(id);
             foreach (var d in Depots.Values) SyncPeople(d);
         }
         foreach (var p in People.Values.ToList())
@@ -195,7 +196,14 @@ public sealed partial class Game
                 p.Act = PersonAct.Working;
                 break;
             case PersonGoal.Post:
-                p.Act = p.Role == StaffRole.Cleaner || LaneVehicle(p) != null ? PersonAct.Working : PersonAct.Waiting;
+                p.Act = p.Role is StaffRole.Cleaner or StaffRole.Service || LaneVehicle(p) != null ? PersonAct.Working : PersonAct.Waiting;
+                break;
+            case PersonGoal.Queue:
+                p.Act = PersonAct.Waiting;
+                break;
+            case PersonGoal.Counter:
+                p.Act = PersonAct.Working;
+                p.Until = Time + 120 + Rng.NextDouble() * 180; // 2–5 minutes at the counter
                 break;
             default:
                 p.Act = PersonAct.Resting;
@@ -258,7 +266,8 @@ public sealed partial class Game
         }
 
         AssignPosts(d, yard, instant);
-        d.OnSite = People.Values.Count(p => p.DepotId == d.Id);
+        ServeCustomers(d, yard, instant);
+        d.OnSite = People.Values.Count(p => p.DepotId == d.Id && p.Role != StaffRole.Customer);
     }
 
     private static bool Leaving(Person p) => p.Goal == PersonGoal.Gate || p.AfterLocker == PersonGoal.Gate;
@@ -360,11 +369,11 @@ public sealed partial class Game
 
     /// <summary>Is someone assigned to this workshop lane or wash bay (on duty, maybe still on the way)?</summary>
     private bool Staffed(Depot d, PlacedModule m, int bay) =>
-        People.Values.Any(p => p.DepotId == d.Id && p.Post is { } post && post.X == m.X && post.Y == m.Y && post.Bay == bay);
+        People.Values.Any(p => p.DepotId == d.Id && p.Role != StaffRole.Customer && p.Post is { } post && post.X == m.X && post.Y == m.Y && post.Bay == bay);
 
     /// <summary>Is someone at work in this workshop lane or wash bay right now?</summary>
     private bool AtWork(Depot d, int x, int y, int bay) =>
-        People.Values.Any(p => p.DepotId == d.Id && p.Act == PersonAct.Working && p.Post is { } post && post.X == x && post.Y == y && post.Bay == bay);
+        People.Values.Any(p => p.DepotId == d.Id && p.Role != StaffRole.Customer && p.Act == PersonAct.Working && p.Post is { } post && post.X == x && post.Y == y && post.Bay == bay);
 
     // ---------------------------------------------------------------- drivers and vehicles
 
@@ -462,6 +471,10 @@ public sealed partial class Game
         public required Dictionary<PlacedModule, ((int X, int Y) Dir, (int X, int Y) Cell)> Doors;
         public required Dictionary<PlacedModule, OfficePlan> Plans;
         public required List<(int X, int Y, int Bay)> Lanes, Washes;
+        public required List<PlacedModule> Centers;
+        public readonly Dictionary<PlacedModule, ServicePlan> ServicePlans = new();
+        /// <summary>All counters of all connected customer centers.</summary>
+        public readonly List<(int X, int Y, int Bay)> Counters = new();
     }
 
     private readonly Dictionary<int, YardInfo> _yards = new();
@@ -477,7 +490,8 @@ public sealed partial class Game
         y = new YardInfo
         {
             Sig = sig, Reach = reach, Offices = offices,
-            Doors = L.Modules.Where(m => m.Type == ModuleType.Office).ToDictionary(o => o, o => L.OfficeDoor(o, reach)),
+            Doors = L.Modules.Where(m => DepotLayout.HasDoor(m.Type)).ToDictionary(o => o, o => L.OfficeDoor(o, reach)),
+            Centers = L.Modules.Where(m => m.Type == ModuleType.ServiceCenter && L.IsConnected(m, reach)).ToList(),
             Plans = new(),
             Lanes = L.Modules.Where(m => m.Type == ModuleType.Workshop && L.IsConnected(m, reach))
                 .SelectMany(m => Enumerable.Range(0, DepotLayout.Lanes(m)).Select(b => (m.X, m.Y, b))).ToList(),
@@ -485,6 +499,12 @@ public sealed partial class Game
                 .SelectMany(m => Enumerable.Range(0, DepotLayout.Lanes(m)).Select(b => (m.X, m.Y, b))).ToList(),
         };
         foreach (var (o, door) in y.Doors) y.Plans[o] = DepotLayout.OfficePlanFor(o, door.Dir);
+        foreach (var c in y.Centers)
+        {
+            var sp = DepotLayout.ServicePlanFor(c, y.Doors[c].Dir);
+            y.ServicePlans[c] = sp;
+            for (int i = 0; i < sp.Counters.Count; i++) y.Counters.Add((c.X, c.Y, i));
+        }
         _yards[d.Id] = y;
         return y;
     }

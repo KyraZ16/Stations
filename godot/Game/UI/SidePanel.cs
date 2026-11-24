@@ -222,7 +222,7 @@ public partial class SidePanel : PanelContainer
         {
             int missing = G.DriverDemand(d.Id) - G.DriversOf(d.Id).Count;
             if (missing > 0) warnings.Add(($"{d.Name}: {missing} Fahrer fehlen", () => UI.Select(new("depot", d.Id)), null));
-            foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner })
+            foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner, StaffRole.Service })
             {
                 int miss = G.WorkerDemand(d.Id, role) - G.WorkersOf(d.Id, role).Count;
                 if (miss > 0) warnings.Add(($"{d.Name}: {miss} {Game.RoleName(role, miss)} fehlen", () => UI.Select(new("depot", d.Id)), null));
@@ -303,6 +303,7 @@ public partial class SidePanel : PanelContainer
         else if (G.WorkersOf(d.Id, StaffRole.Mechanic).Count == 0) w.Add("Werkstatt ohne Mechaniker – sie bleibt geschlossen");
         if (d.Layout.CountConnected(ModuleType.Wash) > 0 && G.WorkersOf(d.Id, StaffRole.Cleaner).Count == 0) w.Add("Waschanlage ohne Reinigungskraft");
         if (G.StaffCount(d.Id) > d.Layout.DriverCapacity()) w.Add("zu wenig Platz im Sozialgebäude");
+        if (d.Layout.CountConnected(ModuleType.ServiceCenter) > 0 && G.WorkersOf(d.Id, StaffRole.Service).Count == 0) w.Add("Kundencenter ohne Servicekräfte – Kunden gehen wieder");
         if (fleet.Any(v => v.Def.Electric) && d.Layout.CountConnected(ModuleType.Charger) == 0) w.Add("E-Busse ohne Ladestation");
         if (fleet.Any(v => v.State == VehicleState.Broken)) w.Add("Fahrzeug mit Panne");
         return w;
@@ -707,20 +708,34 @@ public partial class SidePanel : PanelContainer
              "Fahrer warten im Sozialgebäude und gehen zu Fuß zum Fahrzeug – ein Sozialgebäude nah an den Stellplätzen spart Zeit.");
 
         // Yard staff: mechanics and cleaners in three shifts
-        foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner })
+        foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner, StaffRole.Service })
         {
+            if (role == StaffRole.Service && d.Layout.CountConnected(ModuleType.ServiceCenter) == 0 && G.WorkersOf(d.Id, role).Count == 0) continue;
             var list = G.WorkersOf(d.Id, role);
             int need = G.WorkerDemand(d.Id, role);
             var rkv = new Ui.KeyValues(_box);
-            var cnt = rkv.Add(role == StaffRole.Mechanic ? "Mechaniker" : "Reinigungskräfte", $"{list.Count} (empfohlen {need})");
+            var cnt = rkv.Add(role switch { StaffRole.Mechanic => "Mechaniker", StaffRole.Service => "Servicekräfte", _ => "Reinigungskräfte" }, $"{list.Count} (empfohlen {need})");
             if (list.Count < need) cnt.AddThemeColorOverride("font_color", Ui.Danger);
             rkv.Add("Früh · Spät · Nacht", string.Join(" · ", Enum.GetValues<ShiftId>().Select(sh => list.Count(x => x.Shift == sh))));
             var ra = Actions();
-            ra.AddChild(Ui.Btn(role == StaffRole.Mechanic ? "+1 Mechaniker" : "+1 Reinigungskraft", () => G.HireWorkers(d.Id, role, 1)));
+            ra.AddChild(Ui.Btn(role switch { StaffRole.Mechanic => "+1 Mechaniker", StaffRole.Service => "+1 Servicekraft", _ => "+1 Reinigungskraft" }, () => G.HireWorkers(d.Id, role, 1)));
             ra.AddChild(Ui.Btn("−1", () => G.FireWorker(d.Id, role), disabled: list.Count == 0));
         }
         Hint("Mechaniker: je Werkstattspur einer pro Schicht, sonst bleibt die Spur zu. Reinigungskräfte: einer pro Waschanlage und Schicht; " +
-             "weitere reinigen geparkte Fahrzeuge von innen. Neue Mitarbeiter kommen in die Schicht mit den wenigsten Leuten.");
+             "weitere reinigen geparkte Fahrzeuge von innen. Servicekräfte: einer pro Schalter in Früh- und Spätschicht (Kundencenter 06–22 Uhr). " +
+             "Neue Mitarbeiter kommen in die Schicht mit den wenigsten Leuten.");
+
+        if (d.Layout.CountConnected(ModuleType.ServiceCenter) > 0)
+        {
+            Space();
+            Add(Ui.Section("Kundencenter"));
+            var ckv = new Ui.KeyValues(_box);
+            Bind(ckv.Add("Schalter besetzt"), () => $"{d.CountersOpen} / {d.Counters}" + (Game.ServiceOpen(G.Time) ? "" : " (geschlossen)"));
+            Bind(ckv.Add("Kunden warten"), () => d.Queue.ToString());
+            Bind(ckv.Add("Heute bedient / gegangen"), () => $"{d.ServedToday} / {d.LostToday}");
+            Bind(ckv.Add("Abos im Umlauf (alle)"), () => $"{G.Subscribers:F0} · +{G.AboBoost:P1} Fahrgäste");
+            Hint($"Jedes Abo bringt {Util.Money(Game.AboPrice)} und für etwa einen Monat etwas mehr Fahrgäste. Kunden warten höchstens {Game.MaxCustomerWait / 60:F0} Minuten.");
+        }
         foreach (var dr in ds.OrderByDescending(x => x.VehicleId != null).Take(25))
             Bind(Ui.Row(_box, dr.Name), () =>
             {
