@@ -238,16 +238,17 @@ public sealed class Props
     // ---------------------------------------------------------------- buildings
 
     /// <summary>
-    /// Office with a walk-in ground floor: break room (tables, chairs, kitchen), lockers and a dispatch desk,
-    /// laid out by <see cref="OfficePlan"/>. The door is in the middle of the local +Z wall.
+    /// Office with a walk-in ground floor laid out by an <see cref="OfficePlan"/> (any size): break room with
+    /// tables and chairs, kitchen corner, lockers, dispatch desk. The door is in the middle of the local +Z wall.
     /// Everything above the ground floor (ceiling, upper storeys, roof) goes into <paramref name="upper"/>,
     /// so the interior view can hide it.
     /// </summary>
-    public Node3D Office(Vector3 size, string color, out Node3D upper)
+    public Node3D Office(OfficePlan plan, float height, string color, out Node3D upper)
     {
         var n = new Node3D();
         upper = new Node3D();
         n.AddChild(upper);
+        var size = new Vector3((float)plan.HalfX * 2, height, (float)plan.HalfZ * 2);
         var wall = Solid(color, 0.85f);
         float hx = size.X / 2, hz = size.Z / 2, wh = (float)OfficePlan.WallHeight, t = 0.2f, door = 1.4f;
 
@@ -265,47 +266,52 @@ public sealed class Props
         Box(n, new Vector3(0, 1.6f, -hz - 0.02f), new Vector3(size.X * 0.82f, 1.2f, 0.04f), Window, shadow: false);
         foreach (int sgn in new[] { -1, 1 })
             Box(n, new Vector3(sgn * (hx + 0.02f), 1.6f, 0), new Vector3(0.04f, 1.2f, size.Z * 0.82f), Window, shadow: false);
-        foreach (int sgn in new[] { -1, 1 })
-            Box(n, new Vector3(sgn * (door / 2 + seg * 0.45f), 1.6f, hz + 0.02f), new Vector3(seg * 0.7f, 1.2f, 0.04f), Window, shadow: false);
+        if (seg > 0.8f)
+            foreach (int sgn in new[] { -1, 1 })
+                Box(n, new Vector3(sgn * (door / 2 + seg * 0.45f), 1.6f, hz + 0.02f), new Vector3(seg * 0.7f, 1.2f, 0.04f), Window, shadow: false);
 
         // Interior: partition between break room and the lockers / dispatch side
-        float pz0 = -hz, pz1 = (float)OfficePlan.PartitionEnd;
-        Box(n, new Vector3(0, wh / 2, (pz0 + pz1) / 2), new Vector3(0.12f, wh, pz1 - pz0), Solid("e9e4da", 0.8f));
+        float pz0 = -hz, pz1 = (float)plan.PartitionEnd;
+        if (pz1 - pz0 > 0.5f) Box(n, new Vector3(0, wh / 2, (pz0 + pz1) / 2), new Vector3(0.12f, wh, pz1 - pz0), Solid("e9e4da", 0.8f));
         var wood = Solid("a77b52", 0.6f);
         var chair = Solid("3f6fa8", 0.6f);
         var metal = Solid("8a96a3", 0.45f, 0.3f);
-        foreach (var (tx, tz) in OfficePlan.Tables)
+        foreach (var (tx, tz) in plan.Tables)
         {
             Box(n, new Vector3((float)tx, 0.74f, (float)tz), new Vector3(1.4f, 0.06f, 0.9f), wood);
             Box(n, new Vector3((float)tx, 0.37f, (float)tz), new Vector3(0.12f, 0.72f, 0.12f), metal);
         }
-        foreach (var (sx, sz, fx, fz) in OfficePlan.Seats)
+        foreach (var (sx, sz, fx, fz) in plan.Seats)
         {
             Box(n, new Vector3((float)sx, 0.45f, (float)sz), new Vector3(0.45f, 0.06f, 0.45f), chair);
             Box(n, new Vector3((float)(sx - fx * 0.22), 0.72f, (float)(sz - fz * 0.22)), fz != 0 ? new Vector3(0.45f, 0.5f, 0.05f) : new Vector3(0.05f, 0.5f, 0.45f), chair);
             Box(n, new Vector3((float)sx, 0.22f, (float)sz), new Vector3(0.05f, 0.44f, 0.05f), metal, shadow: false);
         }
-        for (int i = 0; i < OfficePlan.Lockers.Length; i++)
+        for (int i = 0; i < plan.Lockers.Count; i++)
         {
-            float lx = (float)OfficePlan.Lockers[i];
-            Box(n, new Vector3(lx, 1.0f, (float)OfficePlan.LockerZ), new Vector3(0.56f, 2.0f, 0.5f), Solid(i % 2 == 0 ? "6d8fa8" : "7d9db5", 0.5f, 0.2f));
-            Box(n, new Vector3(lx + 0.18f, 1.1f, (float)OfficePlan.LockerZ + 0.26f), new Vector3(0.04f, 0.2f, 0.03f), DarkSteel, shadow: false);
+            float lx = (float)plan.Lockers[i];
+            Box(n, new Vector3(lx, 1.0f, (float)plan.LockerZ), new Vector3(0.56f, 2.0f, 0.5f), Solid(i % 2 == 0 ? "6d8fa8" : "7d9db5", 0.5f, 0.2f));
+            Box(n, new Vector3(lx + 0.18f, 1.1f, (float)plan.LockerZ + 0.26f), new Vector3(0.04f, 0.2f, 0.03f), DarkSteel, shadow: false);
         }
-        Box(n, new Vector3(2.1f, 0.25f, (float)OfficePlan.LockerStandZ + 0.4f), new Vector3(2.6f, 0.06f, 0.35f), wood); // bench
-        var (dx, dz) = OfficePlan.Desk;
-        Box(n, new Vector3((float)dx, 0.74f, (float)dz), new Vector3(1.6f, 0.06f, 0.8f), Solid("e6e2da", 0.5f));
-        Box(n, new Vector3((float)dx, 0.37f, (float)dz), new Vector3(1.5f, 0.72f, 0.06f), Solid("bdb7ab", 0.6f));
-        Box(n, new Vector3((float)dx - 0.3f, 1.02f, (float)dz - 0.25f), new Vector3(0.55f, 0.36f, 0.04f), Display, shadow: false);
-        Box(n, new Vector3((float)dx + 0.35f, 1.02f, (float)dz - 0.25f), new Vector3(0.55f, 0.36f, 0.04f), ChargerScreen, shadow: false);
-        Box(n, new Vector3((float)dx, 0.45f, (float)dz + 0.6f), new Vector3(0.5f, 0.06f, 0.5f), chair);
-        var (kx, kz) = OfficePlan.Kitchen;
+        float l0 = (float)plan.Lockers.Min(), l1 = (float)plan.Lockers.Max();
+        Box(n, new Vector3((l0 + l1) / 2, 0.25f, (float)plan.LockerStandZ + 0.4f), new Vector3(l1 - l0 + 0.5f, 0.06f, 0.35f), wood); // bench
+        if (plan.Desk is var (dx, dz))
+        {
+            Box(n, new Vector3((float)dx, 0.74f, (float)dz), new Vector3(1.6f, 0.06f, 0.8f), Solid("e6e2da", 0.5f));
+            Box(n, new Vector3((float)dx, 0.37f, (float)dz), new Vector3(1.5f, 0.72f, 0.06f), Solid("bdb7ab", 0.6f));
+            Box(n, new Vector3((float)dx - 0.3f, 1.02f, (float)dz - 0.25f), new Vector3(0.55f, 0.36f, 0.04f), Display, shadow: false);
+            Box(n, new Vector3((float)dx + 0.35f, 1.02f, (float)dz - 0.25f), new Vector3(0.55f, 0.36f, 0.04f), ChargerScreen, shadow: false);
+            Box(n, new Vector3((float)dx, 0.45f, (float)dz + 0.6f), new Vector3(0.5f, 0.06f, 0.5f), chair);
+        }
+        var (kx, kz) = plan.Kitchen;
         Box(n, new Vector3((float)kx, 0.45f, (float)kz), new Vector3(0.6f, 0.9f, 1.6f), Solid("f0eee8", 0.4f));
         Box(n, new Vector3((float)kx, 1.05f, (float)kz - 0.4f), new Vector3(0.35f, 0.3f, 0.3f), DarkSteel); // coffee machine
-        Box(n, new Vector3(-hx + 0.6f, 0.02f, hz - 1.2f), new Vector3(0.8f, 0.03f, 1.2f), Solid("7a4b3a", 0.9f), shadow: false); // mat
 
-        // Ceiling with lights, upper storeys, roof
+        // Ceiling with lights (over the tables, lockers and desk), upper storeys, roof
         Box(upper, new Vector3(0, wh + 0.1f, 0), new Vector3(size.X, 0.2f, size.Z), Solid("d8d4cc", 0.9f));
-        foreach (var (lx, lz) in new[] { (-2.2f, -2.3f), (-2.2f, 0.4f), (2.1f, -2.6f), (2.6f, 1.4f) })
+        var lights = plan.Tables.Select(tb => ((float)tb.X, (float)tb.Z)).Append(((l0 + l1) / 2, (float)plan.LockerStandZ));
+        if (plan.Desk is var (ddx, ddz)) lights = lights.Append(((float)ddx, (float)ddz));
+        foreach (var (lx, lz) in lights)
             Box(upper, new Vector3(lx, wh - 0.02f, lz), new Vector3(1.2f, 0.04f, 0.3f), HallLight, shadow: false);
         float top = size.Y;
         if (top > wh + 0.4f)
@@ -324,87 +330,82 @@ public sealed class Props
         return n;
     }
 
-    /// <summary>Open steel hall (workshop or wash bay) so vehicles inside stay visible.</summary>
-    public Node3D Hall(Vector3 size, bool vertical, string accent, bool wash, out List<Node3D> brushes, out Node3D roofNode)
+    /// <summary>
+    /// Open steel hall (workshop or wash bay) with any number of lanes, two cells apart, so vehicles inside
+    /// stay visible. Workshops get two-post lifts and pits per lane, wash bays a pair of brushes per lane.
+    /// </summary>
+    public Node3D Hall(Vector3 size, bool vertical, string accent, bool wash, int lanes, out List<(Node3D Pivot, int Lane)> brushes, out Node3D roofNode)
     {
-        brushes = new List<Node3D>();
+        brushes = new List<(Node3D, int)>();
         var n = new Node3D();
         roofNode = new Node3D();
         n.AddChild(roofNode);
         float px = size.X / 2 - 0.25f, pz = size.Z / 2 - 0.25f, h = size.Y;
-        // Steel frame: pillars along the long sides
-        int bays = Math.Max(2, (int)((vertical ? size.Z : size.X) / 4.5f));
+        float laneStep = 2 * (float)DepotLayout.CellSize;
+        float LaneAt(int b) => (b - (lanes - 1) / 2f) * laneStep;
+        Vector3 At(float across, float y, float along) => vertical ? new Vector3(across, y, along) : new Vector3(along, y, across);
+        Vector3 Sz(float across, float y, float along) => vertical ? new Vector3(across, y, along) : new Vector3(along, y, across);
+        float halfAcross = vertical ? px : pz, halfAlong = vertical ? pz : px;
+
+        // Steel frame: pillars along the long sides, roof beams across
+        int bays = Math.Max(2, (int)(halfAlong * 2 / 4.5f));
         for (int i = 0; i <= bays; i++)
         {
-            float t = -0.5f + (float)i / bays;
-            var a = vertical ? new Vector3(-px, h / 2, t * 2 * pz) : new Vector3(t * 2 * px, h / 2, -pz);
-            var b = vertical ? new Vector3(px, h / 2, t * 2 * pz) : new Vector3(t * 2 * px, h / 2, pz);
-            Box(n, a, new Vector3(0.35f, h, 0.35f), Steel);
-            Box(n, b, new Vector3(0.35f, h, 0.35f), Steel);
-            // roof beam across
-            Box(n, (a + b) / 2 + new Vector3(0, h / 2 - 0.2f, 0), vertical ? new Vector3(size.X, 0.35f, 0.25f) : new Vector3(0.25f, 0.35f, size.Z), Steel);
+            float t = (-0.5f + (float)i / bays) * 2 * halfAlong;
+            Box(n, At(-halfAcross, h / 2, t), new Vector3(0.35f, h, 0.35f), Steel);
+            Box(n, At(halfAcross, h / 2, t), new Vector3(0.35f, h, 0.35f), Steel);
+            Box(n, At(0, h - 0.2f, t), Sz(halfAcross * 2 + 0.5f, 0.35f, 0.25f), Steel);
         }
         // Low wall on one long side, colored panel band on top of it
-        var side = vertical ? new Vector3(-px, 1.1f, 0) : new Vector3(0, 1.1f, -pz);
-        Box(n, side, vertical ? new Vector3(0.25f, 2.2f, size.Z) : new Vector3(size.X, 2.2f, 0.25f), Solid("b6b1a8", 0.9f));
-        Box(n, side + new Vector3(0, h - 2.0f, 0), vertical ? new Vector3(0.3f, 1.2f, size.Z) : new Vector3(size.X, 1.2f, 0.3f), Solid(accent, 0.6f));
-        // Translucent roof and lights underneath
+        Box(n, At(-halfAcross, 1.1f, 0), Sz(0.25f, 2.2f, halfAlong * 2 + 0.5f), Solid("b6b1a8", 0.9f));
+        Box(n, At(-halfAcross, h - 0.9f, 0), Sz(0.3f, 1.2f, halfAlong * 2 + 0.5f), Solid(accent, 0.6f));
+        // Translucent roof and lights underneath (one row per lane)
         var roof = new StandardMaterial3D
         {
             AlbedoColor = new Color("c9d6e2") { A = 0.38f }, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Roughness = 0.2f,
         };
         Box(roofNode, new Vector3(0, h + 0.05f, 0), new Vector3(size.X + 0.4f, 0.12f, size.Z + 0.4f), roof, shadow: false);
-        for (int i = 0; i < bays; i++)
-        {
-            float t = -0.5f + (i + 0.5f) / bays;
-            Box(n, (vertical ? new Vector3(0, h - 0.5f, t * 2 * pz) : new Vector3(t * 2 * px, h - 0.5f, 0)),
-                new Vector3(1.4f, 0.08f, 0.35f), HallLight, shadow: false);
-        }
+        for (int b = 0; b < lanes; b++)
+            for (int i = 0; i < bays; i++)
+            {
+                float t = (-0.5f + (i + 0.5f) / bays) * 2 * halfAlong;
+                Box(n, At(LaneAt(b), h - 0.5f, t), Sz(0.35f, 0.08f, 1.4f), HallLight, shadow: false);
+            }
         // Gate frames at both short ends
-        foreach (int s in new[] { -1, 1 })
-        {
-            var end = vertical ? new Vector3(0, h - 0.6f, s * pz) : new Vector3(s * px, h - 0.6f, 0);
-            Box(n, end, vertical ? new Vector3(size.X - 0.5f, 1.2f, 0.25f) : new Vector3(0.25f, 1.2f, size.Z - 0.5f), Solid("d9a21b", 0.5f, 0.3f));
-        }
+        foreach (int e in new[] { -1, 1 })
+            Box(n, At(0, h - 0.6f, e * halfAlong), Sz(halfAcross * 2 - 0.5f, 1.2f, 0.25f), Solid("d9a21b", 0.5f, 0.3f));
+
         if (wash)
         {
-            // Rotating brushes either side of the lane
-            foreach (int s in new[] { -1, 1 })
-            {
-                var pivot = new Node3D { Position = vertical ? new Vector3(s * 1.75f, h * 0.38f, 0) : new Vector3(0, h * 0.38f, s * 1.75f) };
-                n.AddChild(pivot);
-                Cylinder(pivot, Vector3.Zero, 0.45f, h * 0.7f, Solid("3f7fd0", 0.95f), segments: 10);
-                Box(pivot, new Vector3(0.48f, 0, 0), new Vector3(0.1f, h * 0.68f, 0.12f), Solid("2a5fa8", 0.95f));
-                brushes.Add(pivot);
-            }
+            // A pair of rotating brushes either side of each lane
+            for (int b = 0; b < lanes; b++)
+                foreach (int s in new[] { -1, 1 })
+                {
+                    var pivot = new Node3D { Position = At(LaneAt(b) + s * 1.75f, h * 0.38f, 0) };
+                    n.AddChild(pivot);
+                    Cylinder(pivot, Vector3.Zero, 0.45f, h * 0.7f, Solid("3f7fd0", 0.95f), segments: 10);
+                    Box(pivot, new Vector3(0.48f, 0, 0), new Vector3(0.1f, h * 0.68f, 0.12f), Solid("2a5fa8", 0.95f));
+                    brushes.Add((pivot, b));
+                }
+            return n;
         }
-        else
+
+        // Workbenches along the closed wall
+        for (int i = 0; i < 3; i++)
         {
-            // Workbenches and tool cabinets along the wall, a lane marking on the floor
-            for (int i = 0; i < 3; i++)
-            {
-                float t = -0.3f + i * 0.3f;
-                var pos = vertical ? new Vector3(-px + 0.7f, 0.5f, t * 2 * pz) : new Vector3(t * 2 * px, 0.5f, -pz + 0.7f);
-                Box(n, pos, vertical ? new Vector3(0.8f, 1.0f, 1.8f) : new Vector3(1.8f, 1.0f, 0.8f), Solid(i == 1 ? "c62828" : "4b5563", 0.6f));
-            }
-            Box(n, new Vector3(0, 0.03f, 0), vertical ? new Vector3(0.15f, 0.02f, size.Z - 1) : new Vector3(size.X - 1, 0.02f, 0.15f), Solid("e0b21c", 0.6f), shadow: false);
-            // Two-post lifts in both lanes (lanes are one cell left and right of the middle)
-            var liftMat = Solid("d9a21b", 0.5f, 0.3f);
-            foreach (int lane in new[] { -1, 1 })
-                foreach (int end in new[] { -1, 1 })
-                    foreach (int lr in new[] { -1, 1 })
-                    {
-                        float across = lane * (float)DepotLayout.CellSize + lr * 1.65f, along = end * 3.4f;
-                        var p = vertical ? new Vector3(across, 1.1f, along) : new Vector3(along, 1.1f, across);
-                        Box(n, p, new Vector3(0.22f, 2.2f, 0.22f), liftMat);
-                    }
-            // pit markings
-            foreach (int lane in new[] { -1, 1 })
-            {
-                float across = lane * (float)DepotLayout.CellSize;
-                Box(n, vertical ? new Vector3(across, 0.025f, 0) : new Vector3(0, 0.025f, across),
-                    vertical ? new Vector3(2.9f, 0.01f, size.Z - 2.2f) : new Vector3(size.X - 2.2f, 0.01f, 2.9f), Solid("6f7680", 0.8f), shadow: false);
-            }
+            float t = (-0.3f + i * 0.3f) * 2 * halfAlong;
+            Box(n, At(-halfAcross + 0.7f, 0.5f, t), Sz(0.8f, 1.0f, 1.8f), Solid(i == 1 ? "c62828" : "4b5563", 0.6f));
+        }
+        // Two-post lifts and a pit marking in every lane, a yellow line between lanes
+        var liftMat = Solid("d9a21b", 0.5f, 0.3f);
+        for (int b = 0; b < lanes; b++)
+        {
+            foreach (int end in new[] { -1, 1 })
+                foreach (int lr in new[] { -1, 1 })
+                    Box(n, At(LaneAt(b) + lr * 1.65f, 1.1f, end * 3.4f), new Vector3(0.22f, 2.2f, 0.22f), liftMat);
+            Box(n, At(LaneAt(b), 0.025f, 0), Sz(2.9f, 0.01f, halfAlong * 2 - 2.2f), Solid("6f7680", 0.8f), shadow: false);
+            if (b > 0)
+                Box(n, At(LaneAt(b) - laneStep / 2, 0.03f, 0), Sz(0.15f, 0.02f, halfAlong * 2 - 1), Solid("e0b21c", 0.6f), shadow: false);
         }
         return n;
     }

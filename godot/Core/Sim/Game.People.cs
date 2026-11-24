@@ -107,9 +107,10 @@ public sealed partial class Game
     {
         if (role == StaffRole.Driver) return DriverDemand(depotId);
         if (!Depots.TryGetValue(depotId, out var d)) return 0;
-        if (role == StaffRole.Mechanic) return d.Layout.CountConnected(ModuleType.Workshop) * BaysPerWorkshop * 3;
+        var y = Yard(d);
+        if (role == StaffRole.Mechanic) return y.Lanes.Count * 3;
         int vehicles = Vehicles.Values.Count(v => v.DepotId == depotId);
-        return d.Layout.CountConnected(ModuleType.Wash) * 3 + (int)Math.Ceiling(vehicles / 15.0);
+        return y.Washes.Count * 3 + (int)Math.Ceiling(vehicles / 15.0);
     }
 
     // ---------------------------------------------------------------- simulation
@@ -294,7 +295,7 @@ public sealed partial class Game
             if (Arriving(p)) continue;
             if (p.Post is { } post && ModuleAt(d, post.X, post.Y) is { } m)
             {
-                var spot = p.Role == StaffRole.Cleaner ? L.WashPost(m)
+                var spot = p.Role == StaffRole.Cleaner ? L.WashPost(m, post.Bay)
                     : LaneVehicle(p) != null ? L.WorkshopWorkPoint(m, post.Bay) : L.WorkshopBench(m, post.Bay);
                 if (instant) Place(p, spot, p.Role == StaffRole.Cleaner || LaneVehicle(p) != null ? PersonAct.Working : PersonAct.Waiting);
                 else if (Far(p, spot)) WalkTo(p, PersonGoal.Post, (spot.X, spot.Y), face: spot.Ang);
@@ -459,6 +460,7 @@ public sealed partial class Game
         public required HashSet<(int, int)> Reach;
         public required List<PlacedModule> Offices;
         public required Dictionary<PlacedModule, ((int X, int Y) Dir, (int X, int Y) Cell)> Doors;
+        public required Dictionary<PlacedModule, OfficePlan> Plans;
         public required List<(int X, int Y, int Bay)> Lanes, Washes;
     }
 
@@ -468,7 +470,7 @@ public sealed partial class Game
     {
         var L = d.Layout;
         long sig = L.Width * 1000 + L.Height;
-        foreach (var m in L.Modules) sig = sig * 31 + m.X * 131 + m.Y * 17 + (int)m.Type * 7 + m.Rot;
+        foreach (var m in L.Modules) sig = sig * 31 + m.X * 131 + m.Y * 17 + (int)m.Type * 7 + m.Rot + m.W * 1009 + m.H * 3001;
         if (_yards.TryGetValue(d.Id, out var y) && y.Sig == sig) return y;
         var reach = L.Reachable();
         var offices = L.Modules.Where(m => m.Type == ModuleType.Office && L.IsConnected(m, reach)).ToList();
@@ -476,15 +478,21 @@ public sealed partial class Game
         {
             Sig = sig, Reach = reach, Offices = offices,
             Doors = L.Modules.Where(m => m.Type == ModuleType.Office).ToDictionary(o => o, o => L.OfficeDoor(o, reach)),
+            Plans = new(),
             Lanes = L.Modules.Where(m => m.Type == ModuleType.Workshop && L.IsConnected(m, reach))
-                .SelectMany(m => Enumerable.Range(0, BaysPerWorkshop).Select(b => (m.X, m.Y, b))).ToList(),
-            Washes = L.Modules.Where(m => m.Type == ModuleType.Wash && L.IsConnected(m, reach)).Select(m => (m.X, m.Y, 0)).ToList(),
+                .SelectMany(m => Enumerable.Range(0, DepotLayout.Lanes(m)).Select(b => (m.X, m.Y, b))).ToList(),
+            Washes = L.Modules.Where(m => m.Type == ModuleType.Wash && L.IsConnected(m, reach))
+                .SelectMany(m => Enumerable.Range(0, DepotLayout.Lanes(m)).Select(b => (m.X, m.Y, b))).ToList(),
         };
+        foreach (var (o, door) in y.Doors) y.Plans[o] = DepotLayout.OfficePlanFor(o, door.Dir);
         _yards[d.Id] = y;
         return y;
     }
 
     private List<PlacedModule> Offices(Depot d) => Yard(d).Offices;
+
+    private OfficePlan Plan(Depot d, PlacedModule office) =>
+        Yard(d).Plans.TryGetValue(office, out var plan) ? plan : DepotLayout.OfficePlanFor(office, Door(d, office).Dir);
 
     private ((int X, int Y) Dir, (int X, int Y) Cell) Door(Depot d, PlacedModule office) =>
         Yard(d).Doors.TryGetValue(office, out var door) ? door : d.Layout.OfficeDoor(office);
@@ -503,8 +511,9 @@ public sealed partial class Game
             return;
         }
         var door = Door(d, office).Dir;
-        double lx = OfficePlan.Lockers[p.Id % OfficePlan.Lockers.Length];
-        var at = d.Layout.OfficePoint(office, door, lx, OfficePlan.LockerStandZ);
+        var plan = Plan(d, office);
+        double lx = plan.Lockers[p.Id % plan.Lockers.Count];
+        var at = d.Layout.OfficePoint(office, door, lx, plan.LockerStandZ);
         p.AfterLocker = then;
         WalkTo(p, PersonGoal.Locker, at, office, DepotLayout.OfficeAngle(door, 0, -1));
     }
@@ -546,12 +555,13 @@ public sealed partial class Game
         {
             var used = People.Values.Where(x => x != p && (x.Office == o || x.TargetOffice == o)).Select(x => x.Seat).ToHashSet();
             // keep the current seat, else the first free one
-            var order = Enumerable.Range(0, OfficePlan.Seats.Length).OrderBy(s => p.Office == o && s == p.Seat ? -1 : s);
+            var plan = Plan(d, o);
+            var order = Enumerable.Range(0, plan.Seats.Count).OrderBy(s => p.Office == o && s == p.Seat ? -1 : s);
             foreach (int s in order)
             {
                 if (used.Contains(s)) continue;
                 var door = Door(d, o).Dir;
-                var seat = OfficePlan.Seats[s];
+                var seat = plan.Seats[s];
                 at = L.OfficePoint(o, door, seat.X, seat.Z);
                 face = DepotLayout.OfficeAngle(door, seat.FaceX, seat.FaceZ);
                 office = o;
@@ -564,8 +574,8 @@ public sealed partial class Game
             // All seats taken: stand in the hallway or by the kitchen
             var o = offices[p.Id % offices.Count];
             var door = Door(d, o).Dir;
-            var stand = new (double X, double Z)[] { (-3.3, 3.0), (-2.4, 3.3), (-1.2, 3.0), (1.3, -0.6), (2.2, -1.2), (3.3, -0.4), (1.0, 0.4), (3.2, 0.5) };
-            var (sx, sz) = stand[p.Id % stand.Length];
+            var stand = Plan(d, o).Standing;
+            var (sx, sz) = stand[p.Id % stand.Count];
             at = L.OfficePoint(o, door, sx, sz);
             face = DepotLayout.OfficeAngle(door, (p.Id % 3) - 1, -1);
             office = o;
@@ -594,7 +604,7 @@ public sealed partial class Game
         {
             // Within the same office: via the hallway when changing sides
             var door = Door(d, from).Dir;
-            pts.Add(L.OfficePoint(from, door, 0, OfficePlan.HallZ));
+            pts.Add(L.OfficePoint(from, door, 0, Plan(d, from).HallZ));
         }
         else
         {
@@ -602,9 +612,10 @@ public sealed partial class Game
             if (from != null)
             {
                 var (dir, cell) = Door(d, from);
-                pts.Add(L.OfficePoint(from, dir, 0, OfficePlan.HallZ));
-                pts.Add(L.OfficePoint(from, dir, 0, OfficePlan.InsideZ));
-                pts.Add(L.OfficePoint(from, dir, 0, OfficePlan.Half + 0.9));
+                var fp = Plan(d, from);
+                pts.Add(L.OfficePoint(from, dir, 0, fp.HallZ));
+                pts.Add(L.OfficePoint(from, dir, 0, fp.InsideZ));
+                pts.Add(L.OfficePoint(from, dir, 0, fp.HalfZ + 0.9));
                 startCell = cell;
             }
             else startCell = L.NearestWalkable(L.CellAt(p.X, p.Y));
@@ -628,9 +639,10 @@ public sealed partial class Game
             }
             if (targetOffice != null)
             {
-                pts.Add(L.OfficePoint(targetOffice, endDir, 0, OfficePlan.Half + 0.9));
-                pts.Add(L.OfficePoint(targetOffice, endDir, 0, OfficePlan.InsideZ));
-                pts.Add(L.OfficePoint(targetOffice, endDir, 0, OfficePlan.HallZ));
+                var tp = Plan(d, targetOffice);
+                pts.Add(L.OfficePoint(targetOffice, endDir, 0, tp.HalfZ + 0.9));
+                pts.Add(L.OfficePoint(targetOffice, endDir, 0, tp.InsideZ));
+                pts.Add(L.OfficePoint(targetOffice, endDir, 0, tp.HallZ));
             }
         }
         pts.Add(target);

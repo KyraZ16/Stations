@@ -2,38 +2,70 @@ namespace Stations.Core.Sim;
 
 /// <summary>
 /// Interior of an office in local meters: x across, z toward the door (door in the middle of the +z wall).
-/// Left half: break room with two tables; back right: lockers; front right: dispatch desk.
-/// The 3D view builds its furniture from the same numbers.
+/// Generated from the inner size: left of the partition a break room with as many tables as fit,
+/// lockers along the back wall on the right, a dispatch desk at the front right (if there is room)
+/// and a kitchen corner by the door. The 3D view builds its furniture from the same plan.
 /// </summary>
-public static class OfficePlan
+public sealed class OfficePlan
 {
-    /// <summary>Half the inner size (office is 3×3 cells minus the wall margin).</summary>
-    public const double Half = 4.1;
     public const double WallHeight = 3.2;
+    /// <summary>Wall margin: the inner half size is half the cells minus this.</summary>
+    public const double Margin = 0.4;
+
+    public double HalfX, HalfZ;
     /// <summary>The partition between break room (x &lt; 0) and the rest ends here (z), leaving a hallway at the door.</summary>
-    public const double PartitionEnd = 1.0;
-
-    public static readonly (double X, double Z)[] Tables = { (-2.2, -2.3), (-2.2, 0.4) };
-
+    public double PartitionEnd;
+    public readonly List<(double X, double Z)> Tables = new();
     /// <summary>Chairs: four around each table, facing it.</summary>
-    public static readonly (double X, double Z, double FaceX, double FaceZ)[] Seats = Tables
-        .SelectMany(t => new[]
-        {
-            (t.X - 0.45, t.Z - 0.8, 0.0, 1.0), (t.X + 0.45, t.Z - 0.8, 0.0, 1.0),
-            (t.X - 0.45, t.Z + 0.8, 0.0, -1.0), (t.X + 0.45, t.Z + 0.8, 0.0, -1.0),
-        }).ToArray();
-
+    public readonly List<(double X, double Z, double FaceX, double FaceZ)> Seats = new();
     /// <summary>Lockers along the back wall (x positions); people stand in front of them.</summary>
-    public static readonly double[] Lockers = { 0.9, 1.5, 2.1, 2.7, 3.3 };
-    public const double LockerZ = -3.8;
-    public const double LockerStandZ = -3.0;
+    public readonly List<double> Lockers = new();
+    public double LockerZ, LockerStandZ;
+    public (double X, double Z)? Desk;
+    public (double X, double Z) Kitchen;
+    /// <summary>Places to stand when all chairs are taken.</summary>
+    public readonly List<(double X, double Z)> Standing = new();
+    /// <summary>Waypoints: just inside the door, in the hallway.</summary>
+    public double InsideZ => HalfZ - 0.8;
+    public double HallZ => Math.Max(HalfZ - 1.9, -HalfZ + 0.6);
 
-    public static readonly (double X, double Z) Desk = (2.6, 1.6);
-    public static readonly (double X, double Z) Kitchen = (-3.7, 2.7);
+    public static OfficePlan Create(double halfX, double halfZ)
+    {
+        var p = new OfficePlan { HalfX = halfX, HalfZ = halfZ };
+        p.PartitionEnd = Math.Max(halfZ - 3.1, -halfZ + 1.0);
 
-    /// <summary>Waypoints: just inside the door, in the hallway toward each half.</summary>
-    public const double InsideZ = 3.3;
-    public const double HallZ = 2.2;
+        // Break room: tables in a grid (each table with its chairs needs about 2.0 × 2.4 m)
+        double x0 = -halfX + 0.3, x1 = -0.5, z0 = -halfZ + 0.3, z1 = p.PartitionEnd;
+        int nx = Math.Max(1, (int)((x1 - x0) / 2.0)), nz = Math.Max(1, (int)((z1 - z0) / 2.4));
+        for (int i = 0; i < nx; i++)
+        for (int j = 0; j < nz; j++)
+        {
+            double tx = x0 + (x1 - x0) * (i + 0.5) / nx, tz = z0 + (z1 - z0) * (j + 0.5) / nz;
+            p.Tables.Add((tx, tz));
+            p.Seats.Add((tx - 0.45, tz - 0.8, 0, 1));
+            p.Seats.Add((tx + 0.45, tz - 0.8, 0, 1));
+            p.Seats.Add((tx - 0.45, tz + 0.8, 0, -1));
+            p.Seats.Add((tx + 0.45, tz + 0.8, 0, -1));
+        }
+
+        // Lockers on the right half of the back wall
+        p.LockerZ = -halfZ + 0.3;
+        p.LockerStandZ = -halfZ + 1.1;
+        for (double x = 0.9; x <= halfX - 0.35; x += 0.6) p.Lockers.Add(x);
+        if (p.Lockers.Count == 0) p.Lockers.Add(Math.Min(0.9, halfX - 0.35));
+
+        if (halfX >= 3.0 && halfZ >= 2.6) p.Desk = (halfX - 1.5, halfZ - 2.5);
+        p.Kitchen = (-halfX + 0.4, halfZ - 1.4);
+
+        // Standing room: by the kitchen and the hallway, and in front of the lockers
+        foreach (var (x, z) in new[]
+        {
+            (-halfX + 1.1, halfZ - 1.1), (-halfX + 1.9, halfZ - 0.8), (-1.2, halfZ - 1.1),
+            (1.2, p.LockerStandZ + 0.9), (halfX - 1.0, p.LockerStandZ + 0.9), (1.0, p.PartitionEnd - 0.5),
+        })
+            p.Standing.Add((Math.Clamp(x, -halfX + 0.4, halfX - 0.4), Math.Clamp(z, -halfZ + 0.4, halfZ - 0.4)));
+        return p;
+    }
 }
 
 public sealed partial class DepotLayout
@@ -130,6 +162,13 @@ public sealed partial class DepotLayout
         return ((0, 1), NearestWalkable(Front((0, 1))));
     }
 
+    /// <summary>Interior plan of an office whose door faces the given way (the local frame turns with the door).</summary>
+    public static OfficePlan OfficePlanFor(PlacedModule m, (int X, int Y) door)
+    {
+        double hw = m.W * CellSize / 2 - OfficePlan.Margin, hh = m.H * CellSize / 2 - OfficePlan.Margin;
+        return door.X != 0 ? OfficePlan.Create(hh, hw) : OfficePlan.Create(hw, hh);
+    }
+
     /// <summary>Office-local point (x across, z toward the door) in yard meters.</summary>
     public (double X, double Y) OfficePoint(PlacedModule m, (int X, int Y) door, double lx, double lz)
     {
@@ -150,7 +189,7 @@ public sealed partial class DepotLayout
     /// <summary>Center and unit vectors along the vehicle lane and across it.</summary>
     private (double X, double Y, double Ax, double Ay, double Cx, double Cy, double HalfLen, double HalfWidth) Frame(PlacedModule m)
     {
-        var (x, y, ang) = Pose(m);
+        var (_, _, ang) = Pose(m);
         var c = CellCenter(m.X + (m.W - 1) / 2.0, m.Y + (m.H - 1) / 2.0);
         double ax = Math.Cos(ang), ay = Math.Sin(ang);
         bool vertical = m.H >= m.W;
@@ -158,45 +197,39 @@ public sealed partial class DepotLayout
         return (c.X, c.Y, ax, ay, -ay, ax, len, wid);
     }
 
-    /// <summary>Where the mechanic of a workshop lane stands while repairing (beside the vehicle, toward the hall's middle).</summary>
-    public (double X, double Y, double Ang) WorkshopWorkPoint(PlacedModule m, int bay)
+    /// <summary>Point in a hall: across = offset from the middle line, along = offset along the lanes.</summary>
+    private (double X, double Y) HallPoint(PlacedModule m, double across, double along)
     {
-        var (lx, ly, _) = Pose(m, bay);
         var f = Frame(m);
-        double side = bay == 0 ? 1 : -1; // lane 0 lies on the -across side
-        double along = bay == 0 ? -1.5 : 1.5;
-        return (lx + f.Cx * side * 1.8 + f.Ax * along, ly + f.Cy * side * 1.8 + f.Ay * along, Math.Atan2(-f.Cy * side, -f.Cx * side));
+        return (f.X + f.Cx * across + f.Ax * along, f.Y + f.Cy * across + f.Ay * along);
     }
 
-    /// <summary>
-    /// Where an idle mechanic waits: lane 0 at the workbench on the hall's closed side,
-    /// lane 1 at the tool trolley on the open side (both just outside their lane).
-    /// </summary>
+    /// <summary>Where the mechanic of a workshop lane stands while repairing: in the gap beside the vehicle.</summary>
+    public (double X, double Y, double Ang) WorkshopWorkPoint(PlacedModule m, int bay)
+    {
+        var f = Frame(m);
+        var (x, y) = HallPoint(m, LaneOffset(m, bay) + 1.85, bay % 2 == 0 ? -1.5 : 1.5);
+        return (x, y, Math.Atan2(-f.Cy, -f.Cx)); // facing the vehicle
+    }
+
+    /// <summary>Where an idle mechanic waits: by the lane's tool trolley at the far end of the hall.</summary>
     public (double X, double Y, double Ang) WorkshopBench(PlacedModule m, int bay)
     {
         var f = Frame(m);
-        double side = bay == 0 ? -1 : 1;
-        double t = -0.3 * 2 * (f.HalfLen - 0.25);
-        double out_ = bay == 0 ? f.HalfWidth - 2.0 : f.HalfWidth - 1.3;
-        return (f.X + f.Cx * side * out_ + f.Ax * t, f.Y + f.Cy * side * out_ + f.Ay * t, Math.Atan2(f.Cy * side, f.Cx * side));
+        var (x, y) = HallPoint(m, LaneOffset(m, bay) + 1.85, f.HalfLen - 2.0);
+        return (x, y, Math.Atan2(f.Ay, f.Ax)); // facing the trolley
     }
 
-    /// <summary>Tool trolley next to lane 1 (the 3D view draws it here).</summary>
-    public (double X, double Y) WorkshopTrolley(PlacedModule m)
-    {
-        var f = Frame(m);
-        double t = -0.3 * 2 * (f.HalfLen - 0.25) + 0.9;
-        double out_ = f.HalfWidth - 0.75;
-        return (f.X + f.Cx * out_ + f.Ax * t, f.Y + f.Cy * out_ + f.Ay * t);
-    }
+    /// <summary>Tool trolley of a workshop lane (the 3D view draws it here).</summary>
+    public (double X, double Y) WorkshopTrolley(PlacedModule m, int bay) =>
+        HallPoint(m, LaneOffset(m, bay) + 1.85, Frame(m).HalfLen - 1.2);
 
-    /// <summary>Control desk at the entry end of a wash bay.</summary>
-    public (double X, double Y, double Ang) WashPost(PlacedModule m)
+    /// <summary>Control desk at the entry end of a wash lane.</summary>
+    public (double X, double Y, double Ang) WashPost(PlacedModule m, int bay = 0)
     {
         var f = Frame(m);
         // vehicles drive in heading +along from the -along end
-        double bx = f.X - f.Ax * (f.HalfLen - 1.2) + f.Cx * (f.HalfWidth - 0.7);
-        double by = f.Y - f.Ay * (f.HalfLen - 1.2) + f.Cy * (f.HalfWidth - 0.7);
-        return (bx, by, Math.Atan2(-f.Cy, -f.Cx));
+        var (x, y) = HallPoint(m, LaneOffset(m, bay) + 2.3, -(f.HalfLen - 1.2));
+        return (x, y, Math.Atan2(-f.Cy, -f.Cx));
     }
 }

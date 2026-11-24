@@ -45,6 +45,8 @@ public partial class DepotEditor : Node3D
     private (int X, int Y)? _hoverCell;
     private bool _painting;
     private (int, int)? _lastPainted;
+    /// <summary>Start cell while a building is being drawn as a rectangle.</summary>
+    private (int X, int Y)? _dragStart;
 
     // UI
     private Label _stats = null!, _status = null!, _toolInfo = null!;
@@ -103,7 +105,7 @@ public partial class DepotEditor : Node3D
     private Godot.Environment _env = null!;
     private ProceduralSkyMaterial _sky = null!;
     private readonly List<OmniLight3D> _lamps = new();
-    private readonly List<(Node3D Pivot, int ModX, int ModY)> _brushes = new();
+    private readonly List<(Node3D Pivot, int ModX, int ModY, int Lane)> _brushes = new();
 
     private StandardMaterial3D Mat(string hex, float roughness = 0.9f) => _props.Solid(hex, roughness);
 
@@ -325,9 +327,9 @@ public partial class DepotEditor : Node3D
                 }
                 case ModuleType.Office:
                 {
-                    var b = _props.Office(new Vector3(fp.X - 0.8f, (float)def.Height, fp.Z - 0.8f), ok ? "d9cbb0" : "d8a49c", out var upper);
-                    b.Position = ground;
                     var door = L.OfficeDoor(m, reach).Dir;
+                    var b = _props.Office(DepotLayout.OfficePlanFor(m, door), (float)def.Height, ok ? "d9cbb0" : "d8a49c", out var upper);
+                    b.Position = ground;
                     b.Rotation = new Vector3(0, Mathf.Atan2(door.X, door.Y), 0); // the door faces the driveway
                     node.AddChild(b);
                     _roofs.Add(upper);
@@ -337,27 +339,30 @@ public partial class DepotEditor : Node3D
                 {
                     bool wash = m.Type == ModuleType.Wash;
                     var hall = _props.Hall(new Vector3(fp.X - 0.6f, (float)def.Height, fp.Z - 0.6f), vertical,
-                        ok ? (wash ? "3f7fd0" : "c9852e") : "d8a49c", wash, out var brushes, out var roof);
+                        ok ? (wash ? "3f7fd0" : "c9852e") : "d8a49c", wash, DepotLayout.Lanes(m), out var brushes, out var roof);
                     hall.Position = ground;
                     node.AddChild(hall);
                     _roofs.Add(roof);
-                    foreach (var br in brushes) _brushes.Add((br, m.X, m.Y));
-                    if (wash)
+                    foreach (var (br, lane) in brushes) _brushes.Add((br, m.X, m.Y, lane));
+                    for (int lane = 0; lane < DepotLayout.Lanes(m); lane++)
                     {
-                        var (wx, wy, wa) = L.WashPost(m);
-                        var desk = _props.WashDesk();
-                        // the desk stands in front of the operator
-                        desk.Position = new Vector3((float)(wx + Math.Cos(wa) * 0.55), 0, (float)(wy + Math.Sin(wa) * 0.55));
-                        desk.Rotation = new Vector3(0, -(float)wa, 0);
-                        node.AddChild(desk);
-                    }
-                    else
-                    {
-                        var (tx, ty) = L.WorkshopTrolley(m);
-                        var trolley = _props.Trolley();
-                        trolley.Position = new Vector3((float)tx, 0, (float)ty);
-                        trolley.Rotation = new Vector3(0, vertical ? Mathf.Pi / 2 : 0, 0);
-                        node.AddChild(trolley);
+                        if (wash)
+                        {
+                            var (wx, wy, wa) = L.WashPost(m, lane);
+                            var desk = _props.WashDesk();
+                            // the desk stands in front of the operator
+                            desk.Position = new Vector3((float)(wx + Math.Cos(wa) * 0.55), 0, (float)(wy + Math.Sin(wa) * 0.55));
+                            desk.Rotation = new Vector3(0, -(float)wa, 0);
+                            node.AddChild(desk);
+                        }
+                        else
+                        {
+                            var (tx, ty) = L.WorkshopTrolley(m, lane);
+                            var trolley = _props.Trolley();
+                            trolley.Position = new Vector3((float)tx, 0, (float)ty);
+                            trolley.Rotation = new Vector3(0, vertical ? Mathf.Pi / 2 : 0, 0);
+                            node.AddChild(trolley);
+                        }
                     }
                     break;
                 }
@@ -570,10 +575,10 @@ public partial class DepotEditor : Node3D
     /// <summary>Wash brushes spin while a vehicle stands in that wash bay.</summary>
     private void SpinBrushes(double delta)
     {
-        foreach (var (pivot, mx, my) in _brushes)
+        foreach (var (pivot, mx, my, lane) in _brushes)
         {
             bool busy = Game.Vehicles.Values.Any(v => v.DepotId == Depot.Id && v.State == VehicleState.Depot &&
-                v.Bay == YardBay.Wash && v.BayX == mx && v.BayY == my);
+                v.Bay == YardBay.Wash && v.BayX == mx && v.BayY == my && v.BayIndex == lane);
             if (busy) pivot.RotateY((float)delta * 6);
         }
     }
@@ -618,6 +623,20 @@ public partial class DepotEditor : Node3D
             case InputEventMouseButton { ButtonIndex: MouseButton.Left } b:
                 _painting = b.Pressed;
                 _lastPainted = null;
+                if (!_bulldoze && _tool is ModuleType dt && DepotLayout.IsDrawable(dt))
+                {
+                    // Buildings: press, drag a rectangle, release (a plain click builds the standard size)
+                    if (b.Pressed) _dragStart = CellAt(b.Position);
+                    else if (_dragStart is { } start)
+                    {
+                        _dragStart = null;
+                        var end = CellAt(b.Position) ?? _hoverCell ?? start;
+                        if (end == start) Apply(start);
+                        else ApplyRect(dt, start, end);
+                    }
+                    UpdateGhost();
+                    break;
+                }
                 if (b.Pressed && CellAt(b.Position) is { } cell) Apply(cell);
                 break;
             case InputEventMouseMotion m:
@@ -666,8 +685,33 @@ public partial class DepotEditor : Node3D
         UpdateGhost();
     }
 
+    private static ((int X, int Y) Pos, int W, int H) Rect((int X, int Y) a, (int X, int Y) b) =>
+        ((Math.Min(a.X, b.X), Math.Min(a.Y, b.Y)), Math.Abs(a.X - b.X) + 1, Math.Abs(a.Y - b.Y) + 1);
+
+    private void ApplyRect(ModuleType t, (int X, int Y) a, (int X, int Y) b)
+    {
+        var (pos, w, h) = Rect(a, b);
+        string? err = Game.PlaceModule(Depot, t, pos.X, pos.Y, 0, w, h);
+        SetStatus(err ?? $"{DepotLayout.Def(t).Name} gebaut – {DepotLayout.SizeInfo(t, w, h)}", err != null);
+    }
+
     private void UpdateGhost()
     {
+        if (_dragStart is { } ds && _hoverCell is { } hc0 && _tool is ModuleType rt && !_bulldoze)
+        {
+            // Drawing a building: show the rectangle with size, places and price
+            var (rp, rw, rh) = Rect(ds, hc0);
+            var rdef = DepotLayout.Def(rt);
+            var (rc, rs) = Footprint(rp.X, rp.Y, rw, rh, (float)rdef.Height);
+            ((BoxMesh)_ghost.Mesh).Size = rs;
+            _ghost.Position = rc;
+            _ghost.Visible = true;
+            double cost = DepotLayout.Cost(rt, rw, rh);
+            string? err = L.CanPlace(rt, rp.X, rp.Y, 0, rw, rh) ?? (Game.CanAfford(cost) ? null : "Nicht genug Geld");
+            _ghostMat.AlbedoColor = err == null ? new Color(0.2f, 0.8f, 0.35f, 0.45f) : new Color(0.9f, 0.2f, 0.15f, 0.45f);
+            SetStatus($"{DepotLayout.SizeInfo(rt, rw, rh)} · {Util.Money(cost)}" + (err != null ? $" – {err}" : ""), err != null);
+            return;
+        }
         if (_hoverCell is not { } c)
         {
             _ghost.Visible = false;
@@ -777,7 +821,8 @@ public partial class DepotEditor : Node3D
         foreach (var t in types)
         {
             var def = DepotLayout.Def(t);
-            var b = PaletteButton($"{def.Name}  ·  {Util.Money(def.Cost)}", !_bulldoze && _tool == t, () => SetTool(t, false));
+            string price = DepotLayout.IsDrawable(t) ? $"{Util.Money(def.Cost / (def.W * def.H))}/Feld" : Util.Money(def.Cost);
+            var b = PaletteButton($"{def.Name}  ·  {price}", !_bulldoze && _tool == t, () => SetTool(t, false));
             b.TooltipText = def.Effect;
             _palette.AddChild(b);
         }
@@ -789,7 +834,7 @@ public partial class DepotEditor : Node3D
         _palette.AddChild(Ui.Section("Ansicht"));
         _palette.AddChild(PaletteButton("◫  Innenansicht (I)", _interior, () => { _interior = !_interior; RebuildPalette(); }));
         _palette.AddChild(Ui.Section("Steuerung"));
-        var help = Ui.Label("Linksklick: bauen (Fahrweg: ziehen)\nR: drehen\nRechte Maustaste ziehen: Kamera drehen\nMausrad: zoomen · Q/E: schwenken\nNah heranzoomen oder I: Dächer aus\nMaus über Person: wer und was\nEsc: zurück zur Karte", 12, Ui.Muted);
+        var help = Ui.Label("Linksklick: bauen (Fahrweg: ziehen)\nGebäude: Rechteck aufziehen (Klick = Standardgröße)\nR: drehen\nRechte Maustaste ziehen: Kamera drehen\nMausrad: zoomen · Q/E: schwenken\nNah heranzoomen oder I: Dächer aus\nMaus über Person: wer und was\nEsc: zurück zur Karte", 12, Ui.Muted);
         _palette.AddChild(help);
     }
 

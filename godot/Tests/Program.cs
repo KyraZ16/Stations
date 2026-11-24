@@ -242,6 +242,23 @@ for (int s = 0; s < 8 * 3600; s += 10)
 Check(sawWorkshop, "abgenutzter Bus fährt in die Werkstatt");
 Check(backHome, "nach der Reparatur zurück auf den Stellplatz");
 
+Console.WriteLine("== Gebäude frei aufziehen");
+var bg = new Game(map, sandbox: true, seed: 4);
+var bDepot = bg.AddDepot(map.Graph.Snap(-200, -900, 300)!.Value)!;
+int capBefore = bDepot.Layout.DriverCapacity();
+Check(bg.PlaceModule(bDepot, ModuleType.Office, 7, 8, 0, 1, 3) != null, "zu kleines Sozialgebäude (1×3) wird abgelehnt");
+Check(bg.PlaceModule(bDepot, ModuleType.Office, 7, 8, 0, 4, 4) == null, "Sozialgebäude 4×4 aufgezogen");
+Check(bDepot.Layout.DriverCapacity() - capBefore == 4 * 4 * DepotLayout.StaffPerCell, $"4×4 bringt {4 * 4 * DepotLayout.StaffPerCell} Mitarbeiterplätze");
+var bigOffice = bDepot.Layout.ModuleAt(7, 8)!;
+var bigPlan = DepotLayout.OfficePlanFor(bigOffice, bDepot.Layout.OfficeDoor(bigOffice).Dir);
+Check(bigPlan.Seats.Count > 8, $"größerer Pausenraum ({bigPlan.Seats.Count} Sitzplätze statt 8)");
+Check(bg.PlaceModule(bDepot, ModuleType.Workshop, 1, 8, 0, 5, 5) != null, "zu kurze Werkstatt (5×5) wird abgelehnt");
+Check(bg.PlaceModule(bDepot, ModuleType.Workshop, 1, 8, 0, 6, 6) == null && DepotLayout.Lanes(bDepot.Layout.ModuleAt(1, 8)!) == 3, "Werkstatt 6×6 hat 3 Spuren");
+Check(bg.WorkerDemand(bDepot.Id, StaffRole.Mechanic) == 9, "3 Spuren brauchen 9 Mechaniker (3 Schichten)");
+var bRestored = Game.Restore(map, SaveData.FromJson(bg.Serialize().ToJson()));
+Check(bRestored.Depots[bDepot.Id].Layout.DriverCapacity() == bDepot.Layout.DriverCapacity() &&
+      DepotLayout.Lanes(bRestored.Depots[bDepot.Id].Layout.ModuleAt(1, 8)!) == 3, "gezeichnete Größen werden gespeichert");
+
 Console.WriteLine("== Personal auf dem Gelände");
 var mechOnSite = yg.People.Values.Where(p => p.Role == StaffRole.Mechanic).ToList();
 var onDuty = yg.WorkersOf(yDepot.Id, StaffRole.Mechanic).Count(w => Game.OnDuty(w.Shift, yg.Time));

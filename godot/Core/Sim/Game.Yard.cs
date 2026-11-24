@@ -298,13 +298,14 @@ public sealed partial class Game
         if (v.Condition < 0.95)
         {
             foreach (var w in d.Layout.Modules.Where(m => m.Type == ModuleType.Workshop && d.Layout.IsConnected(m, reach)))
-                for (int b = 0; b < BaysPerWorkshop; b++)
+                for (int b = 0; b < DepotLayout.Lanes(w); b++)
                     if (!Busy(w, b) && Staffed(d, w, b)) return (w, b, YardTask.ToWorkshop);
         }
         if (v.Cleanliness < 0.9)
         {
             foreach (var w in d.Layout.Modules.Where(m => m.Type == ModuleType.Wash && d.Layout.IsConnected(m, reach)))
-                if (!Busy(w, 0) && Staffed(d, w, 0)) return (w, 0, YardTask.ToWash);
+                for (int b = 0; b < DepotLayout.Lanes(w); b++)
+                    if (!Busy(w, b) && Staffed(d, w, b)) return (w, b, YardTask.ToWash);
         }
         return (ModuleAt(d, v.SpotX, v.SpotY), 0, YardTask.ToSpot);
     }
@@ -340,7 +341,7 @@ public sealed partial class Game
                 }
                 else if (v.Bay == YardBay.Wash)
                 {
-                    if (!AtWork(d, v.BayX, v.BayY, 0)) continue; // nobody operating the wash
+                    if (!AtWork(d, v.BayX, v.BayY, v.BayIndex)) continue; // nobody operating this wash lane
                     v.Cleanliness = Math.Min(1, v.Cleanliness + dt / (WashMinutes * 60));
                     d.Washing++;
                     if (v.Cleanliness >= 0.999) GoOnFromBay(d, v);

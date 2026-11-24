@@ -57,10 +57,10 @@ public partial class Main : Node
                 var d0 = game.Depots.Values.First();
                 game.PlaceModule(d0, Core.Sim.ModuleType.Road, 16, 8, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Wash, 17, 8, 1);
-                game.PlaceModule(d0, Core.Sim.ModuleType.Workshop, 2, 8, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Workshop, 1, 8, 0, 6, 6); // drawn: three lanes
                 game.PlaceModule(d0, Core.Sim.ModuleType.LongBusSpot, 18, 0, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Charger, 17, 6, 0);
-                game.PlaceModule(d0, Core.Sim.ModuleType.Office, 7, 8, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Office, 7, 8, 0, 4, 4); // drawn: 48 staff places
                 game.HireMissingDrivers(d0.Id); // mechanics and cleaners for the new workshop and wash
                 foreach (var v in game.Vehicles.Values.Where(v => v.DepotId == d0.Id && v.State == VehicleState.Depot).Take(3))
                 {

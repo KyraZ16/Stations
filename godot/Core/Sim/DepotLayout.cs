@@ -14,16 +14,21 @@ public sealed record ModuleDef(
     string Color,
     string Effect);
 
-/// <summary>A building block placed on the depot grid. Rot 1 swaps width and height.</summary>
+/// <summary>
+/// A building block placed on the depot grid. Rot 1 swaps width and height.
+/// Buildings (offices, workshops, wash bays) can be drawn in any size: Sw × Sh cells (0 = standard size).
+/// </summary>
 public sealed class PlacedModule
 {
     public ModuleType Type { get; set; }
     public int X { get; set; }
     public int Y { get; set; }
     public int Rot { get; set; }
+    public int Sw { get; set; }
+    public int Sh { get; set; }
 
-    [JsonIgnore] public int W => Rot % 2 == 0 ? DepotLayout.Def(Type).W : DepotLayout.Def(Type).H;
-    [JsonIgnore] public int H => Rot % 2 == 0 ? DepotLayout.Def(Type).H : DepotLayout.Def(Type).W;
+    [JsonIgnore] public int W => Sw > 0 ? Sw : Rot % 2 == 0 ? DepotLayout.Def(Type).W : DepotLayout.Def(Type).H;
+    [JsonIgnore] public int H => Sh > 0 ? Sh : Rot % 2 == 0 ? DepotLayout.Def(Type).H : DepotLayout.Def(Type).W;
 
     public bool Covers(int x, int y) => x >= X && x < X + W && y >= Y && y < Y + H;
 }
@@ -36,8 +41,12 @@ public sealed class PlacedModule
 public sealed partial class DepotLayout
 {
     public const double CellSize = 3; // m
-    /// <summary>Staff (drivers, mechanics, cleaners) per office: lockers and break room.</summary>
-    public const int DriversPerOffice = 25;
+    /// <summary>Staff places per office cell (drivers, mechanics and cleaners share them).</summary>
+    public const int StaffPerCell = 3;
+    /// <summary>Staff places of a standard (3×3) office.</summary>
+    public const int DriversPerOffice = 9 * StaffPerCell;
+    /// <summary>Largest side of a drawn building, in cells.</summary>
+    public const int MaxBuildingSide = 12;
 
     public int Width { get; set; } = 24;
     public int Height { get; set; } = 16;
@@ -49,9 +58,9 @@ public sealed partial class DepotLayout
         [ModuleType.BusSpot] = new(ModuleType.BusSpot, "Busstellplatz", 1, 5, 10_000, 0.04, "8d9096", "+1 Bus (Stirnseite muss am Fahrweg liegen)"),
         [ModuleType.TramSpot] = new(ModuleType.TramSpot, "Abstellgleis", 1, 12, 60_000, 0.06, "b8ada0", "+1 Tram (Stirnseite muss am Gleis liegen)"),
         [ModuleType.LongBusSpot] = new(ModuleType.LongBusSpot, "Gelenkbus-Stellplatz", 1, 7, 14_000, 0.04, "7f8794", "+1 Bus bis 21 m, auch Gelenkbusse"),
-        [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 150_000, 7, "d9cbb0", $"Platz für {DriversPerOffice} Mitarbeiter: Umkleide, Pausenraum ({OfficePlan.Seats.Length} Plätze)"),
-        [ModuleType.Workshop] = new(ModuleType.Workshop, "Werkstatt", 4, 6, 400_000, 9, "9fb3c8", "2 Spuren, je Spur ein Mechaniker im Dienst (+25 % Zustand pro Stunde)"),
-        [ModuleType.Wash] = new(ModuleType.Wash, "Waschanlage", 2, 6, 120_000, 5, "a8d0d8", "Mit Reinigungskraft im Dienst: ein Fahrzeug nach dem anderen (15 min pro Wäsche)"),
+        [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 153_000, 7, "d9cbb0", $"Frei aufziehbar (ab 2×2): {StaffPerCell} Mitarbeiter je Feld (3×3 = {DriversPerOffice}), Umkleide und Pausenraum wachsen mit"),
+        [ModuleType.Workshop] = new(ModuleType.Workshop, "Werkstatt", 4, 6, 408_000, 9, "9fb3c8", "Frei aufziehbar (ab 2×6): je 2 Felder Breite eine Spur, je Spur ein Mechaniker im Dienst (+25 % Zustand pro Stunde)"),
+        [ModuleType.Wash] = new(ModuleType.Wash, "Waschanlage", 2, 6, 120_000, 5, "a8d0d8", "Frei aufziehbar (ab 2×6): je 2 Felder Breite eine Waschstraße, je Straße eine Reinigungskraft im Dienst (15 min pro Wäsche)"),
         [ModuleType.Charger] = new(ModuleType.Charger, "Ladestation", 1, 1, 60_000, 2.2, "3fae6a", "Direkt neben einen Stellplatz bauen: lädt den E-Bus dort (voll in 3 Stunden)"),
     };
 
@@ -68,10 +77,55 @@ public sealed partial class DepotLayout
 
     public PlacedModule? ModuleAt(int x, int y) => Modules.FirstOrDefault(m => m.Covers(x, y));
 
-    /// <summary>Why a module cannot go there, or null if it fits.</summary>
-    public string? CanPlace(ModuleType type, int x, int y, int rot)
+    /// <summary>Buildings that are drawn as a rectangle of any size.</summary>
+    public static bool IsDrawable(ModuleType t) => t is ModuleType.Office or ModuleType.Workshop or ModuleType.Wash;
+
+    /// <summary>Why a building cannot have this size (cells), or null.</summary>
+    public static string? SizeError(ModuleType t, int w, int h)
     {
-        var m = new PlacedModule { Type = type, X = x, Y = y, Rot = rot };
+        int s = Math.Min(w, h), l = Math.Max(w, h);
+        if (l > MaxBuildingSide) return $"Höchstens {MaxBuildingSide} Felder lang";
+        return t switch
+        {
+            ModuleType.Office when s < 2 => "Ein Sozialgebäude braucht mindestens 2×2 Felder",
+            ModuleType.Workshop or ModuleType.Wash when s < 2 || l < 6 => $"Eine {Def(t).Name} braucht mindestens 2×6 Felder",
+            _ => null,
+        };
+    }
+
+    /// <summary>Price of a module in the given size (buildings: by area, relative to the standard size).</summary>
+    public static double Cost(ModuleType t, int w = 0, int h = 0)
+    {
+        var d = Def(t);
+        return IsDrawable(t) && w > 0 && h > 0 ? Math.Round(d.Cost * w * h / (d.W * d.H) / 1000) * 1000 : d.Cost;
+    }
+
+    /// <summary>Staff places of an office of that size.</summary>
+    public static int OfficeCapacity(int w, int h) => w * h * StaffPerCell;
+
+    /// <summary>Workshop lanes / wash lanes: one per two cells across.</summary>
+    public static int LaneCount(int w, int h) => Math.Max(1, Math.Min(w, h) / 2);
+
+    public static int Lanes(PlacedModule m) => m.Type is ModuleType.Workshop or ModuleType.Wash ? LaneCount(m.W, m.H) : 1;
+
+    /// <summary>Short description of what a building of this size offers.</summary>
+    public static string SizeInfo(ModuleType t, int w, int h)
+    {
+        string size = $"{w}×{h} Felder";
+        return t switch
+        {
+            ModuleType.Office => $"{size}: {OfficeCapacity(w, h)} Mitarbeiter, {OfficePlan.Create(w * CellSize / 2 - 0.4, h * CellSize / 2 - 0.4).Seats.Count} Sitzplätze",
+            ModuleType.Workshop => $"{size}: {LaneCount(w, h)} Spur(en)",
+            ModuleType.Wash => $"{size}: {LaneCount(w, h)} Waschstraße(n)",
+            _ => size,
+        };
+    }
+
+    /// <summary>Why a module cannot go there, or null if it fits.</summary>
+    public string? CanPlace(ModuleType type, int x, int y, int rot, int w = 0, int h = 0)
+    {
+        var m = new PlacedModule { Type = type, X = x, Y = y, Rot = rot, Sw = w, Sh = h };
+        if (w > 0 && SizeError(type, w, h) is string sizeErr) return sizeErr;
         if (x < 0 || y < 0 || x + m.W > Width || y + m.H > Height) return "Außerhalb des Grundstücks";
         for (int i = x; i < x + m.W; i++)
         for (int j = y; j < y + m.H; j++)
@@ -176,7 +230,7 @@ public sealed partial class DepotLayout
     public int DriverCapacity()
     {
         var reach = Reachable();
-        return Modules.Count(m => m.Type == ModuleType.Office && IsConnected(m, reach)) * DriversPerOffice;
+        return Modules.Where(m => m.Type == ModuleType.Office && IsConnected(m, reach)).Sum(m => OfficeCapacity(m.W, m.H));
     }
 
     /// <summary>Connected parking spots in a stable order (for showing parked vehicles).</summary>
@@ -198,19 +252,22 @@ public sealed partial class DepotLayout
     public (int X, int Y) CellAt(double x, double y) =>
         ((int)Math.Floor((x + Width * CellSize / 2) / CellSize), (int)Math.Floor((y + Height * CellSize / 2) / CellSize));
 
-    /// <summary>Where a vehicle stands in a module: center (and lane for workshops), heading along the long side.</summary>
+    /// <summary>Where a vehicle stands in a module: center (and lane for workshops/wash bays), heading along the long side.</summary>
     public (double X, double Y, double Ang) Pose(PlacedModule m, int bay = 0)
     {
         var c = CellCenter(m.X + (m.W - 1) / 2.0, m.Y + (m.H - 1) / 2.0);
         bool vertical = m.H >= m.W;
         double ang = vertical ? -Math.PI / 2 : 0; // vehicles face away from the gate side
-        if (m.Type == ModuleType.Workshop)
+        if (m.Type is ModuleType.Workshop or ModuleType.Wash)
         {
-            double lane = (bay == 0 ? -1 : 1) * CellSize;
+            double lane = LaneOffset(m, bay);
             c = vertical ? (c.X + lane, c.Y) : (c.X, c.Y + lane);
         }
         return (c.X, c.Y, ang);
     }
+
+    /// <summary>Offset of a lane from the building's middle line (lanes are two cells apart).</summary>
+    public static double LaneOffset(PlacedModule m, int bay) => (bay - (Lanes(m) - 1) / 2.0) * 2 * CellSize;
 
     /// <summary>A driveway cell from which the module is entered (null if not connected).</summary>
     public (int X, int Y)? AccessCell(PlacedModule m, HashSet<(int, int)> reach)

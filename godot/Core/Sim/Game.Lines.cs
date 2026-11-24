@@ -322,14 +322,16 @@ public sealed partial class Game
     // ---------------------------------------------------------------- depot yard
 
     /// <summary>Place a module in a depot yard. Returns an error message or null.</summary>
-    public string? PlaceModule(Depot d, ModuleType type, int x, int y, int rot)
+    /// <summary>Build a module; buildings may be given a drawn size w × h in cells (0 = standard size).</summary>
+    public string? PlaceModule(Depot d, ModuleType type, int x, int y, int rot, int w = 0, int h = 0)
     {
+        if (!DepotLayout.IsDrawable(type)) w = h = 0;
         if (type == ModuleType.TramSpot && d.Mode != ModeId.Tram) return "Abstellgleise gibt es nur im Tram-Betriebshof";
         if (type is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.Charger && d.Mode == ModeId.Tram)
             return "Im Tram-Betriebshof werden Abstellgleise gebaut";
-        if (d.Layout.CanPlace(type, x, y, rot) is string err) return err;
-        if (!Pay(DepotLayout.Def(type).Cost)) return "Nicht genug Geld";
-        d.Layout.Modules.Add(new PlacedModule { Type = type, X = x, Y = y, Rot = rot });
+        if (d.Layout.CanPlace(type, x, y, rot, w, h) is string err) return err;
+        if (!Pay(DepotLayout.Cost(type, w, h))) return "Nicht genug Geld";
+        d.Layout.Modules.Add(new PlacedModule { Type = type, X = x, Y = y, Rot = w > 0 ? 0 : rot, Sw = w, Sh = h });
         EnsureHomeSpots(d);
         OnChange();
         return null;
@@ -349,10 +351,10 @@ public sealed partial class Game
             d.Layout.Modules.Add(m);
             return "Dann hätten nicht mehr alle Fahrzeuge einen Stellplatz";
         }
-        if (d.Layout.DriverCapacity() < DriversOf(d.Id).Count)
+        if (d.Layout.DriverCapacity() < StaffCount(d.Id))
         {
             d.Layout.Modules.Add(m);
-            return "Dann hätten nicht mehr alle Fahrer Platz";
+            return "Dann hätten nicht mehr alle Mitarbeiter Platz";
         }
         EnsureHomeSpots(d);
         OnChange();

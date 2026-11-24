@@ -408,7 +408,6 @@ public sealed partial class Game
     private const double RepairPerHour = 0.25; // condition restored per hour in a workshop bay
     private const double WashMinutes = 15;
     private const double ChargeHours = 3;
-    private const int BaysPerWorkshop = 2;
     public const double TowCost = 1_500;
     private const double BreakdownMinutes = 20;
     private double _serviceTimer;
