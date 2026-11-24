@@ -26,6 +26,11 @@ public sealed class SaveData
     public List<DayStats> History { get; set; } = new();
     /// <summary>Monthly passes in circulation (sold at customer centers).</summary>
     public double Subscribers { get; set; }
+    /// <summary>Research: points, finished projects, the running project and its progress (researcher-hours).</summary>
+    public double Points { get; set; }
+    public List<string>? Researched { get; set; }
+    public string? ActiveResearch { get; set; }
+    public double ResearchProgress { get; set; }
 
     public sealed class PlacedDto
     {
@@ -131,6 +136,10 @@ public sealed partial class Game
             }).ToList(),
             History = History.ToList(),
             Subscribers = Subscribers,
+            Points = Points,
+            Researched = Researched.ToList(),
+            ActiveResearch = ActiveResearch,
+            ResearchProgress = ResearchProgress,
         };
     }
 
@@ -143,8 +152,12 @@ public sealed partial class Game
             _vehicleCounter = data.VehicleCounter,
             History = data.History ?? new(),
             Subscribers = data.Subscribers,
+            Points = data.Points,
+            ActiveResearch = data.ActiveResearch,
+            ResearchProgress = data.ResearchProgress,
         };
         g.Today = new DayStats { Day = g.Day };
+        foreach (var id in data.Researched ?? new()) if (ResearchTree.All.Any(r => r.Id == id)) g.Researched.Add(id);
         var graph = map.Graph;
         foreach (var t in data.Tracks ?? new())
         {

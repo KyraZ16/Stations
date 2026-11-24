@@ -12,8 +12,9 @@ public partial class TopBar : PanelContainer
     /// <summary>Raised for the save and menu buttons.</summary>
     public event Action? SaveRequested;
     public event Action? MenuRequested;
+    public event Action? ResearchRequested;
 
-    private Label _clock = null!, _money = null!, _trips = null!, _balance = null!, _riders = null!;
+    private Label _clock = null!, _money = null!, _trips = null!, _balance = null!, _riders = null!, _points = null!;
     private readonly Button[] _speed = new Button[4];
     private double _timer;
 
@@ -48,8 +49,12 @@ public partial class TopBar : PanelContainer
         _trips = Stat(row, "Fahrgäste heute");
         _balance = Stat(row, "Einnahmen / Kosten");
         _riders = Stat(row, "Wartend / unterwegs");
+        _points = Stat(row, "Punkte");
 
         row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        var research = new Button { Text = "Forschung", TooltipText = "Punkte gegen Neuerungen eintauschen" };
+        research.Pressed += () => ResearchRequested?.Invoke();
+        row.AddChild(research);
         var save = new Button { Text = "Speichern", TooltipText = "F5" };
         save.Pressed += () => SaveRequested?.Invoke();
         row.AddChild(save);
@@ -92,5 +97,8 @@ public partial class TopBar : PanelContainer
         _trips.Text = Util.Num(g.Today.Trips);
         _balance.Text = $"{Util.Money(g.Today.Revenue)} / {Util.Money(g.Today.Costs)}";
         _riders.Text = $"{Util.Num(g.WaitingCount)} / {Util.Num(g.RidingCount)}";
+        _points.Text = g.ActiveResearch is string rid
+            ? $"{g.Points:F0} · {g.ResearchProgress / ResearchTree.Get(rid).Hours:P0}"
+            : $"{g.Points:F0}";
     }
 }

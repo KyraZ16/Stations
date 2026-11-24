@@ -330,5 +330,44 @@ Check(withStaff.G.AboBoost > 0, $"Abos bringen mehr Fahrgäste (+{withStaff.G.Ab
 var sRestored = Game.Restore(map, SaveData.FromJson(withStaff.G.Serialize().ToJson()));
 Check(Math.Abs(sRestored.Subscribers - withStaff.G.Subscribers) < 1e-6, "Abos werden gespeichert");
 
+Console.WriteLine("== Forschung");
+(Game G, double Hours) ResearchRun(int researchers)
+{
+    var rg = new Game(map, sandbox: true, seed: 21);
+    DemoNetwork.Build(rg);
+    var rd = rg.Depots.Values.First(d => d.Mode == ModeId.Bus);
+    rg.PlaceModule(rd, ModuleType.Office, 7, 8, 0, 4, 4); // places for the researchers
+    string? err = rg.PlaceModule(rd, ModuleType.PlanningOffice, 8, 12, 0, 3, 3);
+    if (err != null) Console.WriteLine($"  Planungsbüro nicht gebaut: {err}");
+    if (researchers > 0) rg.HireWorkers(rd.Id, StaffRole.Researcher, researchers);
+    rg.Points = 100;
+    rg.StartResearch("pay2");
+    double start = rg.Time;
+    while (!rg.Has("pay2") && rg.Time - start < 5 * 86400) rg.Advance(600);
+    return (rg, (rg.Time - start) / 3600);
+}
+var rg0 = new Game(map, sandbox: true, seed: 21);
+DemoNetwork.Build(rg0);
+Check(rg0.PaymentLevel == 1 && rg0.StartResearch("pay2") != null, "am Anfang nur Bargeld, ohne Punkte keine Forschung");
+rg0.Advance(86400);
+Check(rg0.Points > 40, $"Punkte aus dem Betrieb ({rg0.Points:F0} nach einem Tag)");
+Check(rg0.StartResearch("pay3") != null, "Stufe 3 braucht erst Stufe 2");
+double before = rg0.Points;
+Check(rg0.StartResearch("pay2") == null && rg0.Points < before, "Forschung gestartet, Punkte abgezogen");
+double prog = rg0.ResearchProgress;
+rg0.Advance(6 * 3600);
+Check(rg0.ResearchProgress == prog, "ohne Forscher kein Fortschritt");
+var slow = ResearchRun(2);
+var fast = ResearchRun(6);
+Console.WriteLine($"  2 Forscher: {slow.Hours:F0} h, 6 Forscher: {fast.Hours:F0} h");
+Check(slow.G.Has("pay2") && fast.G.Has("pay2"), "Kartenzahlung erforscht");
+Check(fast.Hours < slow.Hours * 0.6, "mehr Forscher sind schneller fertig");
+Check(fast.G.PaymentLevel == 2 && fast.G.BoardSeconds < rg0.BoardSeconds + 1e-9 && fast.G.PaymentBoost > 0, "Stufe 2: schnellerer Einstieg, mehr Fahrgäste");
+Check(fast.G.WorkersOf(fast.G.Depots.Values.First(d => d.Mode == ModeId.Bus).Id, StaffRole.Researcher).All(w => w.Shift != ShiftId.Night), "Forscher arbeiten tagsüber");
+fast.G.Points += 200;
+fast.G.StartResearch("pay3");
+var rRestored = Game.Restore(map, SaveData.FromJson(fast.G.Serialize().ToJson()));
+Check(rRestored.Has("pay2") && rRestored.ActiveResearch == "pay3" && Math.Abs(rRestored.Points - fast.G.Points) < 1e-6, "Forschungsstand wird gespeichert");
+
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

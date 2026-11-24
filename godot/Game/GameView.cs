@@ -53,6 +53,7 @@ public partial class GameView : Node
         var top = new TopBar { Game = Game };
         top.SaveRequested += () => Save(manual: true);
         top.MenuRequested += () => MenuRequested?.Invoke();
+        top.ResearchRequested += () => _ui.Select(new Selection("research", 0));
         ui.AddChild(top);
         ui.AddChild(new ToolBar { UI = _ui });
         ui.AddChild(new SidePanel { UI = _ui });

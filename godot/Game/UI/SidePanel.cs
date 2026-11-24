@@ -181,7 +181,82 @@ public partial class SidePanel : PanelContainer
             case { Kind: "line" } s when G.Lines.TryGetValue(s.Id, out var line): LinePanel(line); break;
             case { Kind: "vehicle" } s when G.Vehicles.TryGetValue(s.Id, out var v): VehiclePanel(v); break;
             case { Kind: "depot" } s when G.Depots.TryGetValue(s.Id, out var d): DepotPanel(d); break;
+            case { Kind: "research" }: ResearchPanel(); break;
             default: OverviewPanel(); break;
+        }
+    }
+
+    // ---------------------------------------------------------------- research
+
+    private void ResearchPanel()
+    {
+        Header("Forschung");
+        // Rebuild when a project becomes affordable (points grow continuously)
+        string Startable() => string.Join(",", ResearchTree.All.Where(r => G.ResearchBlocker(r) == null).Select(r => r.Id));
+        string startable = Startable();
+        _binds.Add(() => { if (Startable() != startable) _dirty = true; });
+        var kv = new Ui.KeyValues(_box);
+        Bind(kv.Add("Punkte"), () => $"{G.Points:F0}");
+        Bind(kv.Add("Forscher am Schreibtisch"), () => G.ResearchersAtWork.ToString());
+        kv.Add("Bezahlen", $"Stufe {G.PaymentLevel}: {ResearchTree.PaymentNames[G.PaymentLevel - 1]}");
+        if (!G.Depots.Values.Any(d => d.Layout.CountConnected(ModuleType.PlanningOffice) > 0))
+            Warn("Noch kein Planungsbüro – baue eins im Betriebshof (3D-Editor) und stelle Forscher ein");
+        else if (!G.Workers.Values.Any(w => w.Role == StaffRole.Researcher))
+            Warn("Noch keine Forscher – stelle sie im Betriebshof-Panel ein");
+        Hint($"Punkte gibt es im Betrieb: {Game.PointsPerBoarding * 100:F0} je 100 Einstiege, {Game.PointsPerCustomer:0.#} je Kunde im Kundencenter. " +
+             "Ein Projekt kostet Punkte zum Start und braucht dann Forscher-Stunden: jeder Forscher am Schreibtisch (Planungsbüro im Betriebshof, " +
+             "Früh- und Spätschicht) schafft eine Stunde pro Stunde.");
+
+        if (G.ActiveResearch is string aid)
+        {
+            var a = ResearchTree.Get(aid);
+            Space();
+            Add(Ui.Section("Läuft"));
+            Add(Ui.Label(a.Name, 15, bold: true));
+            var bar = new ProgressBar { MinValue = 0, MaxValue = a.Hours, ShowPercentage = true, CustomMinimumSize = new Vector2(0, 18) };
+            Add(bar);
+            var eta = Ui.Label("", 12, Ui.Muted);
+            Add(eta);
+            _binds.Add(() =>
+            {
+                bar.Value = G.ResearchProgress;
+                eta.Text = $"{G.ResearchProgress:F1} / {a.Hours:F0} Forscher-Stunden · " +
+                           (double.IsFinite(G.ResearchEta) ? $"noch ca. {G.ResearchEta:F1} h bei {G.ResearchersAtWork} Forschern" : "kein Forscher am Schreibtisch – stellt Forscher ein");
+            });
+            Actions().AddChild(Ui.Btn("Abbrechen (Hälfte der Punkte zurück)", () => G.CancelResearch()));
+        }
+
+        foreach (var cat in ResearchTree.All.Select(r => r.Category).Distinct())
+        {
+            Space();
+            Add(Ui.Section(cat));
+            foreach (var r in ResearchTree.All.Where(r => r.Category == cat))
+            {
+                string state = G.Has(r.Id) ? "✓ erforscht" : G.ActiveResearch == r.Id ? "läuft" : $"{r.Points:F0} Punkte · {r.Hours:F0} Forscher-h";
+                var name = Ui.Label(r.Name, 14, bold: true);
+                name.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+                name.CustomMinimumSize = new Vector2(300, 0);
+                Add(name);
+                Add(Ui.Label(state, 12, G.Has(r.Id) ? Ui.Accent : Ui.Text));
+                var info = Ui.Label(r.Effect, 12, Ui.Muted);
+                info.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+                info.CustomMinimumSize = new Vector2(300, 0);
+                Add(info);
+                if (G.Has(r.Id) || G.ActiveResearch == r.Id) continue;
+                string? block = G.ResearchBlocker(r);
+                if (block != null)
+                {
+                    var why = Ui.Label($"Noch nicht möglich: {block}", 12, Ui.Muted);
+                    why.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+                    why.CustomMinimumSize = new Vector2(300, 0);
+                    Add(why);
+                    continue;
+                }
+                Actions().AddChild(Ui.Btn("Forschung starten", () =>
+                {
+                    if (G.StartResearch(r.Id) is string err) Toast(err);
+                }, primary: true));
+            }
         }
     }
 
@@ -708,17 +783,19 @@ public partial class SidePanel : PanelContainer
              "Fahrer warten im Sozialgebäude und gehen zu Fuß zum Fahrzeug – ein Sozialgebäude nah an den Stellplätzen spart Zeit.");
 
         // Yard staff: mechanics and cleaners in three shifts
-        foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner, StaffRole.Service })
+        foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner, StaffRole.Service, StaffRole.Researcher })
         {
             if (role == StaffRole.Service && d.Layout.CountConnected(ModuleType.ServiceCenter) == 0 && G.WorkersOf(d.Id, role).Count == 0) continue;
+            if (role == StaffRole.Researcher && d.Layout.CountConnected(ModuleType.PlanningOffice) == 0 && G.WorkersOf(d.Id, role).Count == 0) continue;
             var list = G.WorkersOf(d.Id, role);
             int need = G.WorkerDemand(d.Id, role);
             var rkv = new Ui.KeyValues(_box);
-            var cnt = rkv.Add(role switch { StaffRole.Mechanic => "Mechaniker", StaffRole.Service => "Servicekräfte", _ => "Reinigungskräfte" }, $"{list.Count} (empfohlen {need})");
-            if (list.Count < need) cnt.AddThemeColorOverride("font_color", Ui.Danger);
+            var cnt = rkv.Add(role switch { StaffRole.Mechanic => "Mechaniker", StaffRole.Service => "Servicekräfte", StaffRole.Researcher => "Forscher", _ => "Reinigungskräfte" },
+                role == StaffRole.Researcher ? $"{list.Count} (Schreibtische für {need})" : $"{list.Count} (empfohlen {need})");
+            if (list.Count < need && role != StaffRole.Researcher) cnt.AddThemeColorOverride("font_color", Ui.Danger);
             rkv.Add("Früh · Spät · Nacht", string.Join(" · ", Enum.GetValues<ShiftId>().Select(sh => list.Count(x => x.Shift == sh))));
             var ra = Actions();
-            ra.AddChild(Ui.Btn(role switch { StaffRole.Mechanic => "+1 Mechaniker", StaffRole.Service => "+1 Servicekraft", _ => "+1 Reinigungskraft" }, () => G.HireWorkers(d.Id, role, 1)));
+            ra.AddChild(Ui.Btn(role switch { StaffRole.Mechanic => "+1 Mechaniker", StaffRole.Service => "+1 Servicekraft", StaffRole.Researcher => "+1 Forscher", _ => "+1 Reinigungskraft" }, () => G.HireWorkers(d.Id, role, 1)));
             ra.AddChild(Ui.Btn("−1", () => G.FireWorker(d.Id, role), disabled: list.Count == 0));
         }
         Hint("Mechaniker: je Werkstattspur einer pro Schicht, sonst bleibt die Spur zu. Reinigungskräfte: einer pro Waschanlage und Schicht; " +

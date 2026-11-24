@@ -388,6 +388,7 @@ public sealed partial class Game
         foreach (var d in Depots.Values.ToList())
         {
             if (depotId != null && d.Id != depotId) continue;
+            // researchers are the player's choice (they speed up research), so they are not hired automatically
             foreach (var role in new[] { StaffRole.Driver, StaffRole.Mechanic, StaffRole.Cleaner, StaffRole.Service })
             {
                 int have = role == StaffRole.Driver ? DriversOf(d.Id).Count : WorkersOf(d.Id, role).Count;

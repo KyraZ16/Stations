@@ -28,7 +28,7 @@ Nach `--` auf der Kommandozeile, z. B.
 - `--tooltest=line|timetable|depot|vehicle|stop|track|draft` baut über die Werkzeuge ein kleines Netz und öffnet das genannte Panel
 - `--time=2` spult auf die angegebene Uhrzeit vor (z. B. nachts, wenn alle Fahrzeuge im Hof stehen)
 - `--depot` öffnet den ersten Betriebshof im 3D-Editor (`--depot=tram` den Tram-Betriebshof, `--depot=edit` mit Beispiel-Bauteilen)
-- `--days=12` spult Tage vor (z. B. um Verschleiß zu sehen), `--select=depot|vehicle|line` öffnet ein Panel
+- `--days=12` spult Tage vor (z. B. um Verschleiß zu sehen), `--select=depot|vehicle|line|research` öffnet ein Panel
 - `--interior` öffnet den Betriebshof in der Innenansicht; `--camdist=30`, `--camyaw=0.6`, `--campitch=0.8` und `--camfocus=office|workshop|wash` stellen die Kamera ein
 - `--debugui` listet Panel-Elemente mit auffällig großer Mindestbreite
 
@@ -46,4 +46,5 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] Personal im Betriebshof: Fahrer, Mechaniker und Reinigungskräfte als Figuren; Sozialgebäude mit Umkleide, Pausenraum und Dispo zum Hineinsehen (Innenansicht mit I oder nah heranzoomen), Werkstatt mit Hebebühnen; Fahrer gehen zu Fuß zum Fahrzeug (Abfahrt erst, wenn sie eingestiegen sind), Mechaniker und Reinigungskräfte arbeiten in Früh-/Spät-/Nachtschicht – ohne sie bleiben Werkstattspuren und Waschanlagen zu; freie Reinigungskräfte putzen geparkte Fahrzeuge innen; Maus über eine Person zeigt Name und Tätigkeit
 - [x] Gebäude frei aufziehen: Sozialgebäude, Werkstatt und Waschanlage als Rechteck beliebiger Größe (Klick = Standardgröße); Preis nach Fläche; Sozialgebäude 3 Mitarbeiterplätze je Feld, Pausenraum, Spinde und Dispo wachsen mit; Werkstatt und Waschanlage je 2 Felder Breite eine Spur (mit Hebebühnen bzw. Bürsten und eigenem Personal)
 - [x] Kundencenter (frei aufziehbar, 06–22 Uhr): Kunden kommen von der Straße, warten auf Stühlen oder stehen, werden an Schaltern von Servicekräften (Früh-/Spätschicht) bedient und kaufen Abos (49 € sofort, für etwa einen Monat bis zu +25 % Fahrgäste); ohne freien Schalter gehen sie nach 20 Minuten wieder
+- [x] Forschung: Punkte aus dem Betrieb (2 je 100 Einstiege, 0,5 je Kunde im Kundencenter) starten Projekte, die dann Forscher-Stunden brauchen; Forscher sitzen im frei aufziehbaren Planungsbüro (Früh-/Spätschicht), mehr Forscher = schneller fertig. Bezahlstufen 1–4 (Bargeld beim Fahrer → Karte am Automaten → kontaktlos am Automaten + Automat im Fahrzeug → kontaktlos im Fahrzeug) beschleunigen den Einstieg und bringen bis zu +10 % Fahrgäste; außerdem Werkstatt-Diagnose, Reinigungsplan, Abo-Marketing. Knopf „Forschung“ in der Kopfleiste
 - [ ] U-Bahn, Kampagne

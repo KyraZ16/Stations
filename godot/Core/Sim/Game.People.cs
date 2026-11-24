@@ -14,6 +14,7 @@ public sealed partial class Game
     public const double WorkerHireCost = 1_500;
     private const double ChangeTime = 40; // s at the locker
     private const double InteriorCleanMinutes = 40;
+    private double CleanMinutes => Has("clean") ? InteriorCleanMinutes / 2 : InteriorCleanMinutes;
     private const double MaxBoardWait = 10 * 60; // s; after that the vehicle leaves anyway
     private const double PeopleInterval = 1; // s between staff updates
 
@@ -77,7 +78,7 @@ public sealed partial class Game
         for (int i = 0; i < n; i++)
         {
             // Fill the shift with the fewest people of this role (the customer center has no night shift)
-            var shift = Enum.GetValues<ShiftId>().Where(s => role != StaffRole.Service || s != ShiftId.Night).OrderBy(s => Workers.Values.Count(w => w.DepotId == depotId && w.Role == role && w.Shift == s)).First();
+            var shift = Enum.GetValues<ShiftId>().Where(s => role is not (StaffRole.Service or StaffRole.Researcher) || s != ShiftId.Night).OrderBy(s => Workers.Values.Count(w => w.DepotId == depotId && w.Role == role && w.Shift == s)).First();
             int id = _nextId++;
             Workers[id] = new Worker { Id = id, Name = Staff.RandomName(Rng), DepotId = depotId, Role = role, Shift = shift };
         }
@@ -110,6 +111,7 @@ public sealed partial class Game
         var y = Yard(d);
         if (role == StaffRole.Mechanic) return y.Lanes.Count * 3;
         if (role == StaffRole.Service) return y.Counters.Count * 2; // early and late shift
+        if (role == StaffRole.Researcher) return y.Desks.Count * 2;
         int vehicles = Vehicles.Values.Count(v => v.DepotId == depotId);
         return y.Washes.Count * 3 + (int)Math.Ceiling(vehicles / 15.0);
     }
@@ -125,6 +127,7 @@ public sealed partial class Game
             foreach (var id in People.Keys.Where(id => id >= 0 && !Drivers.ContainsKey(id) && !Workers.ContainsKey(id)).ToList()) People.Remove(id);
             foreach (var d in Depots.Values) SyncPeople(d);
         }
+        StepResearch(dt);
         foreach (var p in People.Values.ToList())
         {
             if (p.Act == PersonAct.Walking) Walk(p, dt);
@@ -196,14 +199,14 @@ public sealed partial class Game
                 p.Act = PersonAct.Working;
                 break;
             case PersonGoal.Post:
-                p.Act = p.Role is StaffRole.Cleaner or StaffRole.Service || LaneVehicle(p) != null ? PersonAct.Working : PersonAct.Waiting;
+                p.Act = p.Role is StaffRole.Cleaner or StaffRole.Service or StaffRole.Researcher || LaneVehicle(p) != null ? PersonAct.Working : PersonAct.Waiting;
                 break;
             case PersonGoal.Queue:
                 p.Act = PersonAct.Waiting;
                 break;
             case PersonGoal.Counter:
                 p.Act = PersonAct.Working;
-                p.Until = Time + 120 + Rng.NextDouble() * 180; // 2–5 minutes at the counter
+                p.Until = Time + (120 + Rng.NextDouble() * 180) * CounterTimeFactor; // 2–5 minutes at the counter (faster with card payment)
                 break;
             default:
                 p.Act = PersonAct.Resting;
@@ -267,6 +270,7 @@ public sealed partial class Game
 
         AssignPosts(d, yard, instant);
         ServeCustomers(d, yard, instant);
+        AssignDesks(d, yard, instant);
         d.OnSite = People.Values.Count(p => p.DepotId == d.Id && p.Role != StaffRole.Customer);
     }
 
@@ -348,7 +352,7 @@ public sealed partial class Game
                 Unhide(p);
                 continue;
             }
-            v.Cleanliness = Math.Min(1, v.Cleanliness + dt / (InteriorCleanMinutes * 60));
+            v.Cleanliness = Math.Min(1, v.Cleanliness + dt / (CleanMinutes * 60));
             if (v.Cleanliness >= 0.98) Unhide(p);
         }
     }
@@ -472,6 +476,10 @@ public sealed partial class Game
         public required Dictionary<PlacedModule, OfficePlan> Plans;
         public required List<(int X, int Y, int Bay)> Lanes, Washes;
         public required List<PlacedModule> Centers;
+        public required List<PlacedModule> PlanningOffices;
+        public readonly Dictionary<PlacedModule, DeskPlan> DeskPlans = new();
+        /// <summary>All desks of all connected planning offices.</summary>
+        public readonly List<(int X, int Y, int Bay)> Desks = new();
         public readonly Dictionary<PlacedModule, ServicePlan> ServicePlans = new();
         /// <summary>All counters of all connected customer centers.</summary>
         public readonly List<(int X, int Y, int Bay)> Counters = new();
@@ -492,6 +500,7 @@ public sealed partial class Game
             Sig = sig, Reach = reach, Offices = offices,
             Doors = L.Modules.Where(m => DepotLayout.HasDoor(m.Type)).ToDictionary(o => o, o => L.OfficeDoor(o, reach)),
             Centers = L.Modules.Where(m => m.Type == ModuleType.ServiceCenter && L.IsConnected(m, reach)).ToList(),
+            PlanningOffices = L.Modules.Where(m => m.Type == ModuleType.PlanningOffice && L.IsConnected(m, reach)).ToList(),
             Plans = new(),
             Lanes = L.Modules.Where(m => m.Type == ModuleType.Workshop && L.IsConnected(m, reach))
                 .SelectMany(m => Enumerable.Range(0, DepotLayout.Lanes(m)).Select(b => (m.X, m.Y, b))).ToList(),
@@ -499,6 +508,12 @@ public sealed partial class Game
                 .SelectMany(m => Enumerable.Range(0, DepotLayout.Lanes(m)).Select(b => (m.X, m.Y, b))).ToList(),
         };
         foreach (var (o, door) in y.Doors) y.Plans[o] = DepotLayout.OfficePlanFor(o, door.Dir);
+        foreach (var po in y.PlanningOffices)
+        {
+            var dp = DepotLayout.DeskPlanFor(po, y.Doors[po].Dir);
+            y.DeskPlans[po] = dp;
+            for (int i = 0; i < dp.Desks.Count; i++) y.Desks.Add((po.X, po.Y, i));
+        }
         foreach (var c in y.Centers)
         {
             var sp = DepotLayout.ServicePlanFor(c, y.Doors[c].Dir);

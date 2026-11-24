@@ -62,6 +62,10 @@ public partial class Main : Node
                 game.PlaceModule(d0, Core.Sim.ModuleType.Charger, 17, 6, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Office, 7, 8, 0, 4, 4); // drawn: 48 staff places
                 game.PlaceModule(d0, Core.Sim.ModuleType.ServiceCenter, 13, 11, 0, 4, 3);
+                game.PlaceModule(d0, Core.Sim.ModuleType.PlanningOffice, 8, 12, 0, 3, 3);
+                game.HireWorkers(d0.Id, Core.Sim.StaffRole.Researcher, 4);
+                game.Points += 100;
+                game.StartResearch("pay2");
                 game.HireMissingDrivers(d0.Id); // mechanics, cleaners and service staff for the new buildings
                 foreach (var v in game.Vehicles.Values.Where(v => v.DepotId == d0.Id && v.State == VehicleState.Depot).Take(3))
                 {
@@ -106,6 +110,7 @@ public partial class Main : Node
         {
             var ui = _view!.Interaction;
             if (sel == "depot" && game.Depots.Count > 0) ui.Select(new Selection("depot", game.Depots.Values.First().Id));
+            if (sel == "research") ui.Select(new Selection("research", 0));
             if (sel == "vehicle" && game.Vehicles.Count > 0)
             {
                 var veh = game.Vehicles.Values.Where(v => v.State == VehicleState.Moving).DefaultIfEmpty(game.Vehicles.Values.First()).MinBy(v => v!.Condition)!;

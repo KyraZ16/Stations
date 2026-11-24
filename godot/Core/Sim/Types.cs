@@ -75,7 +75,7 @@ public sealed class Driver
 }
 
 /// <summary>Who a person on the depot grounds is: staff, or a customer of the customer center.</summary>
-public enum StaffRole { Driver, Mechanic, Cleaner, Service, Customer }
+public enum StaffRole { Driver, Mechanic, Cleaner, Service, Customer, Researcher }
 
 /// <summary>Work shifts of yard staff: early 06–14, late 14–22, night 22–06.</summary>
 public enum ShiftId { Early, Late, Night }

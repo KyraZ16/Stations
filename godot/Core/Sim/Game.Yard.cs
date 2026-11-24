@@ -331,7 +331,7 @@ public sealed partial class Game
                 if (v.Bay == YardBay.Workshop)
                 {
                     if (!AtWork(d, v.BayX, v.BayY, v.BayIndex)) continue; // no mechanic at work in this lane right now
-                    double gain = Math.Min(1 - v.Condition, RepairPerHour * dt / 3600);
+                    double gain = Math.Min(1 - v.Condition, RepairPerHour * (Has("diag") ? 1.5 : 1) * dt / 3600);
                     v.Condition += gain;
                     double c = gain * 100 * v.Def.RepairCostPerPercent;
                     Money -= c;

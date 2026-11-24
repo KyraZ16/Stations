@@ -335,6 +335,16 @@ public partial class DepotEditor : Node3D
                     _roofs.Add(upper);
                     break;
                 }
+                case ModuleType.PlanningOffice:
+                {
+                    var door = L.OfficeDoor(m, reach).Dir;
+                    var po = _props.PlanningOffice(DepotLayout.DeskPlanFor(m, door), (float)def.Height, out var upper);
+                    po.Position = ground;
+                    po.Rotation = new Vector3(0, Mathf.Atan2(door.X, door.Y), 0);
+                    node.AddChild(po);
+                    _roofs.Add(upper);
+                    break;
+                }
                 case ModuleType.ServiceCenter:
                 {
                     var door = L.OfficeDoor(m, reach).Dir;
@@ -385,7 +395,7 @@ public partial class DepotEditor : Node3D
                     break;
                 }
             }
-            if (m.Type is ModuleType.Office or ModuleType.Workshop or ModuleType.Wash or ModuleType.ServiceCenter)
+            if (DepotLayout.IsDrawable(m.Type))
             {
                 var label = new Label3D
                 {
@@ -485,7 +495,7 @@ public partial class DepotEditor : Node3D
             f.Root.Rotation = new Vector3(0, yaw, 0);
 
             bool walking = p.Act == PersonAct.Walking;
-            bool seated = p.Act is PersonAct.Resting or PersonAct.Waiting && p.Seat >= 0 && p.Office != null;
+            bool seated = (p.Act is PersonAct.Resting or PersonAct.Waiting || (p.Act == PersonAct.Working && p.Role == StaffRole.Researcher)) && p.Seat >= 0 && p.Office != null;
             float swing = walking ? Mathf.Sin((float)(p.Walked * Mathf.Tau / 1.5)) * 0.5f : 0;
             float legs = seated ? 1.45f : swing;
             float arms = p.Act switch
@@ -561,6 +571,7 @@ public partial class DepotEditor : Node3D
                 {
                     StaffRole.Mechanic => "geht an die Arbeit (Werkstatt)",
                     StaffRole.Service => "geht an den Schalter",
+                    StaffRole.Researcher => "geht an den Schreibtisch",
                     _ => "geht zur Waschanlage",
                 },
                 PersonGoal.Clean => $"geht {vehicle} reinigen",
@@ -572,6 +583,7 @@ public partial class DepotEditor : Node3D
             {
                 StaffRole.Mechanic => "repariert",
                 StaffRole.Service => "am Schalter",
+                StaffRole.Researcher => Game.ActiveResearch is string rid ? $"forscht: {ResearchTree.Get(rid).Name}" : "am Schreibtisch (kein Projekt)",
                 _ => p.Post != null ? "bedient die Waschanlage" : $"reinigt {vehicle}",
             },
             PersonAct.Waiting => "wartet auf das nächste Fahrzeug",
@@ -846,9 +858,9 @@ public partial class DepotEditor : Node3D
         foreach (var c in _palette.GetChildren()) c.QueueFree();
         _palette.AddChild(Ui.Section("Bauen"));
         var types = Depot.Mode == ModeId.Tram
-            ? new List<ModuleType> { ModuleType.Road, ModuleType.TramSpot, ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter }
+            ? new List<ModuleType> { ModuleType.Road, ModuleType.TramSpot, ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter, ModuleType.PlanningOffice }
             : new List<ModuleType> { ModuleType.Road, ModuleType.BusSpot, ModuleType.LongBusSpot, ModuleType.Charger,
-                ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter };
+                ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter, ModuleType.PlanningOffice };
         foreach (var t in types)
         {
             var def = DepotLayout.Def(t);
@@ -904,11 +916,11 @@ public partial class DepotEditor : Node3D
         int drivers = Game.DriversOf(Depot.Id).Count;
         int staff = Game.StaffCount(Depot.Id);
         int mech = Game.WorkersOf(Depot.Id, StaffRole.Mechanic).Count, clean = Game.WorkersOf(Depot.Id, StaffRole.Cleaner).Count;
-        int svc = Game.WorkersOf(Depot.Id, StaffRole.Service).Count;
+        int svc = Game.WorkersOf(Depot.Id, StaffRole.Service).Count, res = Game.WorkersOf(Depot.Id, StaffRole.Researcher).Count;
         string spot = Depot.Mode == ModeId.Tram ? "Abstellgleise" : "Stellplätze";
         string service = $"Werkstatt: {Depot.Repairing}   ·   Wäsche: {Depot.Washing}" + (Depot.Chargers > 0 ? $"   ·   Laden: {Depot.Charging}" : "");
         _stats.Text = $"{spot}: {vehicles} / {L.VehicleCapacity(Depot.Mode)} belegt ({home} im Hof)   ·   " +
-                      $"Personal: {staff} / {L.DriverCapacity()} ({drivers} Fahrer, {mech} Mechaniker, {clean} Reinigung, {svc} Service; {Depot.OnSite} vor Ort)   ·   {service}" +
+                      $"Personal: {staff} / {L.DriverCapacity()} ({drivers} Fahrer, {mech} Mechaniker, {clean} Reinigung, {svc} Service, {res} Forschung; {Depot.OnSite} vor Ort)   ·   {service}" +
                       (Depot.Counters > 0 ? $"   ·   Kunden: {Depot.Queue} warten, {Depot.ServedToday} bedient" : "") + $"   ·   {Util.Money(Game.Money)}";
     }
 }

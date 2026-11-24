@@ -114,7 +114,7 @@ public sealed partial class Game
     {
         var R = Router;
         if (R == null || R.CoveredRes <= 0 || R.CoveredJobs <= 0) return;
-        _demandAcc += R.CoveredRes * TripsPerResident / 86400 * DemandFactor(Time) * dt * (1 + AboBoost);
+        _demandAcc += R.CoveredRes * TripsPerResident / 86400 * DemandFactor(Time) * dt * (1 + AboBoost + PaymentBoost);
         double destShare = R.CoveredJobs / Math.Max(Map.TotalJobs, 1);
         var cells = Map.Cells;
         while (_demandAcc >= 1)
@@ -335,7 +335,7 @@ public sealed partial class Game
     private void ServeStop(Vehicle v, TransitLine line, Run run)
     {
         int k = v.StopIdx;
-        int moves = 0;
+        int moves = 0, paying = 0;
         if (Stops.TryGetValue(run.StopIds[k], out var stop))
         {
             // Alighting
@@ -381,11 +381,13 @@ public sealed partial class Game
                         v.Passengers.Add(p);
                         stop.BoardedToday++;
                         Today.Boardings++;
+                        Points += PointsPerBoarding;
                         CustomerDemand();
                         Today.WaitSum += Time - p.WaitingSince;
                         line.PassengersToday++;
                         if (p.LegIdx == 0)
                         {
+                            paying++;
                             Money += Fare;
                             Today.Revenue += Fare;
                             line.RevenueToday += Fare;
@@ -401,7 +403,8 @@ public sealed partial class Game
         }
         v.State = VehicleState.Dwell;
         v.V = 0;
-        v.DwellUntil = Time + (k == 0 ? 12 : 7) + moves * 1.2;
+        // Paying passengers take longer to board, depending on how they can pay (see research)
+        v.DwellUntil = Time + (k == 0 ? 12 : 7) + (moves - paying) * 1.2 + paying * BoardSeconds;
     }
 
     // ---------------------------------------------------------------- wear and maintenance

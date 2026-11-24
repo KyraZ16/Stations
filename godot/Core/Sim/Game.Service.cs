@@ -30,7 +30,7 @@ public sealed partial class Game
     private void CustomerDemand()
     {
         if (!ServiceOpen(Time)) return;
-        _customerAcc += CustomerShare;
+        _customerAcc += CustomerShare * (Has("market") ? 1.5 : 1);
         if (_customerAcc < 1) return;
         _customerAcc -= 1;
         var depots = Depots.Values.Where(d => Yard(d).Centers.Count > 0).ToList();
@@ -114,6 +114,7 @@ public sealed partial class Game
                 Money += AboPrice;
                 Today.Revenue += AboPrice;
                 Today.Customers++;
+                Points += PointsPerCustomer;
                 d.ServedToday++;
                 Subscribers += 1;
                 c.Post = null;

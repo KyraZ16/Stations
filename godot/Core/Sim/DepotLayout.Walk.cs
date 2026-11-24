@@ -108,6 +108,31 @@ public sealed class ServicePlan
     }
 }
 
+/// <summary>
+/// Interior of a planning office in local meters (door in the middle of the +z wall): desks in two blocks left and
+/// right of the middle aisle, each with a chair on the door side; a whiteboard on the back wall.
+/// </summary>
+public sealed class DeskPlan
+{
+    public double HalfX, HalfZ;
+    /// <summary>Desk centers; the chair is ChairOffset toward the door, the researcher faces the back wall.</summary>
+    public readonly List<(double X, double Z)> Desks = new();
+    public const double ChairOffset = 0.75;
+
+    public static DeskPlan Create(double halfX, double halfZ)
+    {
+        var p = new DeskPlan { HalfX = halfX, HalfZ = halfZ };
+        for (double z = -halfZ + 1.2; z <= halfZ - 2.0; z += 2.4)
+            for (double x = 1.2; x <= halfX - 0.85; x += 2.0)
+            {
+                p.Desks.Add((-x, z));
+                p.Desks.Add((x, z));
+            }
+        if (p.Desks.Count == 0) p.Desks.Add((Math.Min(1.0, halfX - 0.8), -halfZ + 1.0));
+        return p;
+    }
+}
+
 public sealed partial class DepotLayout
 {
     /// <summary>Cells people can walk on: empty ground, driveways, parking spots, open halls.</summary>
@@ -115,7 +140,7 @@ public sealed partial class DepotLayout
     {
         if (x < 0 || y < 0 || x >= Width || y >= Height) return false;
         var m = ModuleAt(x, y);
-        return m == null || m.Type is not (ModuleType.Office or ModuleType.Charger or ModuleType.ServiceCenter);
+        return m == null || m.Type is not (ModuleType.Office or ModuleType.Charger or ModuleType.ServiceCenter or ModuleType.PlanningOffice);
     }
 
     /// <summary>Closest walkable cell (breadth-first from the cell itself).</summary>
@@ -207,6 +232,13 @@ public sealed partial class DepotLayout
     {
         double hw = m.W * CellSize / 2 - OfficePlan.Margin, hh = m.H * CellSize / 2 - OfficePlan.Margin;
         return door.X != 0 ? OfficePlan.Create(hh, hw) : OfficePlan.Create(hw, hh);
+    }
+
+    /// <summary>Interior of a planning office whose door faces the given way.</summary>
+    public static DeskPlan DeskPlanFor(PlacedModule m, (int X, int Y) door)
+    {
+        double hw = m.W * CellSize / 2 - OfficePlan.Margin, hh = m.H * CellSize / 2 - OfficePlan.Margin;
+        return door.X != 0 ? DeskPlan.Create(hh, hw) : DeskPlan.Create(hw, hh);
     }
 
     /// <summary>Interior of a customer center whose door faces the given way.</summary>
