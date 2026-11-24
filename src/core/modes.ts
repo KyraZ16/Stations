@@ -24,6 +24,8 @@ export interface ModeDef {
     width: number;
   };
   stopCost: number;
+  /** Cost per meter of own infrastructure (tram tracks), if the mode needs any. */
+  trackCostPerM?: number;
   depotCost: number;
 }
 
@@ -44,12 +46,13 @@ export const MODES: Record<ModeId, ModeDef> = {
     depotCost: 400_000,
   },
   tram: {
-    id: 'tram', name: 'Tram', tier: 'local', icon: '🚋', available: false, infra: 'tramtrack',
+    id: 'tram', name: 'Tram', tier: 'local', icon: '🚋', available: true, infra: 'tramtrack',
     vehicle: {
       name: 'Niederflurtram', capacity: 180, maxSpeed: 60 / 3.6, price: 2_500_000,
-      costPerHour: 60, costPerKm: 2, length: 30, width: 2.4,
+      costPerHour: 25, costPerKm: 2, length: 30, width: 2.4,
     },
     stopCost: 40_000,
+    trackCostPerM: 2_500,
     depotCost: 3_000_000,
   },
   metro: {

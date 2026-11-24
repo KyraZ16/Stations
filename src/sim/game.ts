@@ -2,7 +2,7 @@ import { Area } from '../core/geo';
 import { MODES, ModeId } from '../core/modes';
 import { LINE_COLORS } from '../core/util';
 import { MapData } from '../map/mapdata';
-import { RoadPos } from '../map/roadgraph';
+import { RoadPos, RouteResult } from '../map/roadgraph';
 import { Path } from './path';
 import { Router } from './router';
 import { randomName } from './staff';
@@ -48,6 +48,8 @@ export interface SaveData {
   }[];
   vehicles: { id: number; name: string; mode: ModeId; depotId: number; lineId: number | null }[];
   drivers?: { id: number; name: string; depotId: number }[];
+  /** Midpoints of road segments with tram track. */
+  tracks?: [number, number][];
   history: DayStats[];
 }
 
@@ -131,10 +133,12 @@ export class Game {
 
   // ---------------------------------------------------------------- building
 
-  stopAt(x: number, y: number, radius: number): Stop | null {
+  /** Nearest stop within radius; with `mode` only stops of that mode. */
+  stopAt(x: number, y: number, radius: number, mode?: ModeId): Stop | null {
     let best: Stop | null = null;
     let bd = radius;
     for (const s of this.stops.values()) {
+      if (mode && s.mode !== mode) continue;
       const d = Math.hypot(s.pos.x - x, s.pos.y - y);
       if (d < bd) {
         bd = d;
@@ -148,15 +152,121 @@ export class Game {
     return this.map.roads[this.map.graph.segWay[pos.seg]]?.name ?? '';
   }
 
-  private uniqueStopName(base: string): string {
-    const names = new Set([...this.stops.values()].map((s) => s.name));
+  /** Stop names are unique per mode, so a bus and a tram stop may share a name. */
+  private uniqueStopName(base: string, mode: ModeId): string {
+    const names = new Set([...this.stops.values()].filter((s) => s.mode === mode).map((s) => s.name));
     if (!names.has(base)) return base;
     for (let i = 2; ; i++) if (!names.has(`${base} ${i}`)) return `${base} ${i}`;
   }
 
+  // ---------------------------------------------------------------- infrastructure per mode
+
+  /** Tram tracks: road segments with track laid on them. */
+  tracks = new Set<number>();
+  /** Incremented when tracks change (renderer cache). */
+  trackVersion = 0;
+
+  private usesTracks(mode: ModeId): boolean {
+    return MODES[mode].infra === 'tramtrack';
+  }
+
+  /** Where a vehicle of this mode can be: roads for buses, tracks for trams. */
+  snapFor(mode: ModeId, x: number, y: number, maxDist: number): RoadPos | null {
+    if (this.usesTracks(mode)) return this.map.graph.snap(x, y, maxDist, (s) => this.tracks.has(s));
+    return this.map.graph.snap(x, y, maxDist);
+  }
+
+  /** Trams have their own right of way: faster than road traffic, capped by the vehicle. */
+  private trackSpeed = (seg: number): number => (this.map.graph.segSpd[seg] / 0.75) * 0.9;
+
+  routeFor(mode: ModeId, a: RoadPos, b: RoadPos): RouteResult | null {
+    const g = this.map.graph;
+    if (this.usesTracks(mode)) return g.routeSegs(a, b, (s) => this.tracks.has(s), this.trackSpeed);
+    return g.route(a, b);
+  }
+
+  /** Route for laying new track along any road (both directions). */
+  planTrack(a: RoadPos, b: RoadPos): { route: RouteResult; segs: number[]; newLength: number; cost: number } | null {
+    const g = this.map.graph;
+    const r = g.routeSegs(a, b, () => true, (s) => (this.tracks.has(s) ? 30 : g.segSpd[s]));
+    if (!r) return null;
+    const segs = [...new Set(r.segs)];
+    const newLength = segs.filter((s) => !this.tracks.has(s)).reduce((sum, s) => sum + g.segLen[s], 0);
+    return { route: r, segs, newLength, cost: newLength * (MODES.tram.trackCostPerM ?? 0) };
+  }
+
+  buildTrack(a: RoadPos, b: RoadPos): boolean {
+    const plan = this.planTrack(a, b);
+    if (!plan) {
+      this.onToast('Keine Straßenverbindung für Gleise', 'error');
+      return false;
+    }
+    if (plan.newLength === 0) return true;
+    if (!this.pay(plan.cost)) return false;
+    for (const s of plan.segs) this.tracks.add(s);
+    this.trackVersion++;
+    this.onChange();
+    return true;
+  }
+
+  get trackLength(): number {
+    let sum = 0;
+    for (const s of this.tracks) sum += this.map.graph.segLen[s];
+    return sum;
+  }
+
+  /**
+   * Remove the track piece near (x, y) up to the next junction or end.
+   * Refused if a stop, depot or line still needs it.
+   */
+  removeTrackAt(x: number, y: number, radius: number): boolean {
+    const g = this.map.graph;
+    const hit = g.snap(x, y, radius, (s) => this.tracks.has(s));
+    if (!hit) return false;
+    const degree = (v: number) => g.vSegs[v].filter((s) => this.tracks.has(s)).length;
+    // Stops and depots split the track into pieces, so tails beyond them can be removed.
+    const occupied = new Set(
+      [...this.stops.values(), ...this.depots.values()].filter((o) => this.usesTracks(o.mode)).map((o) => o.pos.seg),
+    );
+    const piece = new Set<number>([hit.seg]);
+    for (const start of [g.segA[hit.seg], g.segB[hit.seg]]) {
+      let v = start, from = hit.seg;
+      while (degree(v) === 2) {
+        const next = g.vSegs[v].find((s) => s !== from && this.tracks.has(s));
+        if (next === undefined || piece.has(next) || occupied.has(next)) break;
+        piece.add(next);
+        v = g.segA[next] === v ? g.segB[next] : g.segA[next];
+        from = next;
+      }
+    }
+    const blocker = [...this.stops.values(), ...this.depots.values()].find(
+      (o) => this.usesTracks(o.mode) && piece.has(o.pos.seg),
+    );
+    if (blocker) {
+      this.onToast(`Auf diesem Gleis liegt noch „${blocker.name}“`, 'error');
+      return true;
+    }
+    for (const s of piece) this.tracks.delete(s);
+    const broken = [...this.lines.values()].find(
+      (l) => this.usesTracks(l.mode) && typeof this.buildRuns(l.stopIds, l.circular, l.mode) === 'string',
+    );
+    if (broken) {
+      for (const s of piece) this.tracks.add(s);
+      this.onToast(`Linie ${broken.name} fährt über dieses Gleis`, 'error');
+      return true;
+    }
+    this.trackVersion++;
+    this.onChange();
+    return true;
+  }
+
   addStop(pos: RoadPos, mode: ModeId = 'bus'): Stop | null {
-    if (this.stopAt(pos.x, pos.y, 30)) {
+    if (this.stopAt(pos.x, pos.y, 30, mode)) {
       this.onToast('Zu nah an einer anderen Haltestelle', 'error');
+      return null;
+    }
+    if (this.usesTracks(mode) && !this.tracks.has(pos.seg)) {
+      this.onToast('Tram-Haltestellen müssen auf Gleisen liegen', 'error');
       return null;
     }
     if (!this.pay(MODES[mode].stopCost)) return null;
@@ -164,7 +274,7 @@ export class Game {
     const street = this.streetName(pos);
     const stop: Stop = {
       id, mode, pos, waiting: [], boardedToday: 0,
-      name: this.uniqueStopName(street || `Haltestelle ${id}`),
+      name: this.uniqueStopName(street || `Haltestelle ${id}`, mode),
     };
     this.stops.set(id, stop);
     this.onChange();
@@ -195,10 +305,15 @@ export class Game {
   }
 
   addDepot(pos: RoadPos, mode: ModeId = 'bus'): Depot | null {
+    if (this.usesTracks(mode) && !this.tracks.has(pos.seg)) {
+      this.onToast('Tram-Betriebshöfe müssen an Gleisen liegen', 'error');
+      return null;
+    }
     if (!this.pay(MODES[mode].depotCost)) return null;
     const id = this.nextId++;
     const street = this.streetName(pos);
-    const depot: Depot = { id, mode, pos, name: street ? `Betriebshof ${street}` : `Betriebshof ${id}` };
+    const kind = mode === 'tram' ? 'Tram-Betriebshof' : 'Betriebshof';
+    const depot: Depot = { id, mode, pos, name: street ? `${kind} ${street}` : `${kind} ${id}` };
     this.depots.set(id, depot);
     this.onChange();
     return depot;
@@ -308,7 +423,7 @@ export class Game {
       const times = [0];
       for (let i = 0; i + 1 < seq.length; i++) {
         const a = this.stops.get(seq[i])!, b = this.stops.get(seq[i + 1])!;
-        const r = this.map.graph.route(a.pos, b.pos);
+        const r = this.routeFor(mode, a.pos, b.pos);
         if (!r) return `Keine befahrbare Verbindung von „${a.name}“ nach „${b.name}“`;
         const s0 = path.length;
         path.append(r);
@@ -322,12 +437,16 @@ export class Game {
 
   /** Try routing a draft line (for previews). */
   previewRoute(a: Stop, b: Stop) {
-    return this.map.graph.route(a.pos, b.pos);
+    return this.routeFor(a.mode, a.pos, b.pos);
   }
 
   createLine(stopIds: number[], circular: boolean, mode: ModeId = 'bus'): TransitLine | null {
     if (stopIds.length < 2) {
       this.onToast('Eine Linie braucht mindestens zwei Haltestellen', 'error');
+      return null;
+    }
+    if (stopIds.some((id) => this.stops.get(id)?.mode !== mode)) {
+      this.onToast(`Eine ${MODES[mode].name}linie kann nur ${MODES[mode].name}-Haltestellen anfahren`, 'error');
       return null;
     }
     const runs = this.buildRuns(stopIds, circular, mode);
@@ -447,8 +566,8 @@ export class Game {
   /** Send a vehicle in service to stop index k of run r on the (changed) line. */
   private rejoin(v: Vehicle, line: TransitLine, r: number, k: number): void {
     const stop = this.stops.get(line.runs[r].stopIds[k])!;
-    const from = this.map.graph.snap(v.x, v.y, 80);
-    const route = from && this.map.graph.route(from, stop.pos);
+    const from = this.snapFor(v.mode, v.x, v.y, 80);
+    const route = from && this.routeFor(v.mode, from, stop.pos);
     if (!route) {
       this.today.lost += v.passengers.length;
       v.passengers = [];
@@ -618,7 +737,7 @@ export class Game {
     }
     const depots = [...this.depots.values()].filter((d) => d.mode === line.mode).sort((a, b) => dist(a) - dist(b));
     if (!depots.length) {
-      this.onToast('Baue zuerst einen Betriebshof', 'error');
+      this.onToast(line.mode === 'tram' ? 'Baue zuerst einen Tram-Betriebshof an den Gleisen' : 'Baue zuerst einen Betriebshof', 'error');
       return;
     }
     const v = this.buyVehicle(depots[0].id);
@@ -672,15 +791,14 @@ export class Game {
     if (v.state === 'depot' && to === 'depot') return;
     if (v.state === 'depot' && !this.takeDriver(v)) return;
     const depot = this.depots.get(v.depotId)!;
-    const graph = this.map.graph;
-    const from = v.state === 'depot' ? depot.pos : graph.snap(v.x, v.y, 80) ?? depot.pos;
+    const from = v.state === 'depot' ? depot.pos : this.snapFor(v.mode, v.x, v.y, 80) ?? depot.pos;
     let dest: RoadPos = depot.pos;
     if (to === 'line') {
       const line = this.lines.get(v.lineId!);
       if (!line) return;
       dest = this.stops.get(line.runs[0].stopIds[0])!.pos;
     }
-    const r = graph.route(from, dest);
+    const r = this.routeFor(v.mode, from, dest);
     if (!r) {
       if (to === 'depot') {
         this.parkInDepot(v);
@@ -1046,6 +1164,10 @@ export class Game {
         id: v.id, name: v.name, mode: v.mode, depotId: v.depotId, lineId: v.lineId,
       })),
       drivers: [...this.drivers.values()].map((d) => ({ id: d.id, name: d.name, depotId: d.depotId })),
+      tracks: [...this.tracks].map((s) => {
+        const g = this.map.graph;
+        return [Math.round(((g.vx[g.segA[s]] + g.vx[g.segB[s]]) / 2) * 10) / 10, Math.round(((g.vy[g.segA[s]] + g.vy[g.segB[s]]) / 2) * 10) / 10];
+      }),
       history: this.history,
     };
   }
@@ -1058,12 +1180,16 @@ export class Game {
     g.history = data.history ?? [];
     g.today = newDayStats(g.day);
     const graph = map.graph;
+    for (const [x, y] of data.tracks ?? []) {
+      const p = graph.snap(x, y, 1.5);
+      if (p) g.tracks.add(p.seg);
+    }
     for (const s of data.stops) {
-      const pos = graph.resnap(s.x, s.y);
+      const pos = g.snapFor(s.mode, s.x, s.y, 60);
       if (pos) g.stops.set(s.id, { id: s.id, name: s.name, mode: s.mode, pos, waiting: [], boardedToday: 0 });
     }
     for (const d of data.depots) {
-      const pos = graph.resnap(d.x, d.y);
+      const pos = g.snapFor(d.mode, d.x, d.y, 60);
       if (pos) g.depots.set(d.id, { id: d.id, name: d.name, mode: d.mode, pos });
     }
     for (const l of data.lines) {

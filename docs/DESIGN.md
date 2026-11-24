@@ -7,7 +7,7 @@
 
 | Ebene | Verkehrsmittel | Infrastruktur | Status |
 |---|---|---|---|
-| **Lokal** | Bus, Tram | Straßen (OSM), Tramgleise | Bus spielbar, Tram geplant |
+| **Lokal** | Bus, Tram | Straßen (OSM), Tramgleise | spielbar |
 | **Stadtweit** | U-Bahn, S-Bahn | Tunnel / eigene Trassen | geplant |
 | **Regional** | Regionalzug | Bahnstrecken | geplant |
 
@@ -34,6 +34,10 @@ Später: 3D-Ansicht nur für Depot-/Stationsbau, Karte bleibt 2D.
   fahren an der Endhaltestelle ein. Abfahrten an der Endhaltestelle im Takt.
 - Personal: Fahrer je Betriebshof (Einstellung, Tageslohn), Schicht max. 8 h, Ablösung an der
   Endhaltestelle, Bedarfsschätzung aus den Fahrzeugstunden, Warnungen bei Bus- oder Fahrermangel
+- Tram: Gleise auf Straßen verlegen (2.500 €/m, Gleis folgt dem kürzesten Straßenweg, in beide
+  Richtungen befahrbar), Tram-Haltestellen (eckig) und -Betriebshöfe nur auf Gleisen, Routing über
+  das Gleisnetz (`RoadGraph.routeSegs`). Abreißen nur, wenn keine Linie, Haltestelle oder kein
+  Betriebshof das Gleisstück braucht. Umsteigen Bus ↔ Tram über Fußwege ≤ 250 m.
 - Linien bearbeiten: Haltestellen einfügen (an der Stelle mit dem kleinsten Umweg), entfernen,
   umsortieren, Ringlinie umschalten. Busse im Einsatz fahren weiter zur nächsten Haltestelle der
   neuen Route, Fahrgäste an Bord werden umgeplant (`Game.rebuildLine`)
@@ -66,7 +70,7 @@ src/
 1. Haltestellen verschieben und zusammenlegen, Linien teilen und verbinden
 2. Personal vertiefen: Dienstpläne, Zufriedenheit, Krankheit; Fahrplan-Zeiträume frei einteilen
 3. Fahrzeugtypen (Gelenkbus, E-Bus), Wartung und Verschleiß, Betriebshof-Kapazität
-4. Tram: Gleise auf Straßen bauen, eigener Graph
+4. Tram ausbauen: vorhandene OSM-Tramgleise übernehmen, Gleise abseits von Straßen, Weichen/Kapazität
 5. Stadtweit: U-Bahn-Tunnel frei zeichnen (Kosten nach Tiefe und Länge), Umsteigeknoten Bus ↔ U-Bahn
 6. Kampagne: Startkapital, Ziele, Stadtwachstum
 7. Depot- und Stations-Builder (3D-Ansicht)

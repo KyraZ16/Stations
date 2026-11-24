@@ -21,6 +21,8 @@ export interface RenderState {
   mouseWorld: { x: number; y: number } | null;
   selected: Selection;
   coverage: boolean;
+  /** Planned track (dashed) while the track tool is active. */
+  trackPlan: { xs: number[]; ys: number[] } | null;
 }
 
 const COLORS = {
@@ -63,6 +65,8 @@ export class Renderer {
   private canalPath = new Path2D();
   private runPaths = new WeakMap<Run, Path2D>();
   private coverageVersion = -1;
+  private trackVersion = -1;
+  private trackPath = new Path2D();
   private coveredPath = new Path2D();
   private uncoveredPath = new Path2D();
 
@@ -222,6 +226,38 @@ export class Renderer {
       ctx.stroke(p);
     }
 
+    // Tram tracks: dark rails with a light gap, scaled with the road
+    if (game.tracks.size) {
+      if (this.trackVersion !== game.trackVersion) {
+        this.trackVersion = game.trackVersion;
+        const g = this.map.graph;
+        this.trackPath = new Path2D();
+        for (const sg of game.tracks) {
+          this.trackPath.moveTo(g.vx[g.segA[sg]], g.vy[g.segA[sg]]);
+          this.trackPath.lineTo(g.vx[g.segB[sg]], g.vy[g.segB[sg]]);
+        }
+      }
+      // Wider than a line stroke so the rails stay visible on both sides of a tram line
+      ctx.strokeStyle = '#4a4f57';
+      ctx.lineWidth = Math.max(7.5, 12 / s);
+      ctx.stroke(this.trackPath);
+      ctx.strokeStyle = '#d9d4cc';
+      ctx.lineWidth = Math.max(4.5, 8 / s);
+      ctx.stroke(this.trackPath);
+    }
+    if (st.trackPlan) {
+      ctx.strokeStyle = '#4a4f57';
+      ctx.globalAlpha = 0.6;
+      ctx.lineWidth = Math.max(7.5, 12 / s);
+      ctx.setLineDash([8 / s, 5 / s]);
+      ctx.beginPath();
+      ctx.moveTo(st.trackPlan.xs[0], st.trackPlan.ys[0]);
+      for (let i = 1; i < st.trackPlan.xs.length; i++) ctx.lineTo(st.trackPlan.xs[i], st.trackPlan.ys[i]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+
     // Transit lines
     const sel = st.selected;
     for (const line of game.lines.values()) {
@@ -316,7 +352,7 @@ export class Renderer {
     for (const d of game.depots.values()) {
       const x = cam.sx(d.pos.x), y = cam.sy(d.pos.y);
       const isSel = sel?.kind === 'depot' && sel.id === d.id;
-      ctx.fillStyle = '#2d3640';
+      ctx.fillStyle = d.mode === 'tram' ? '#5b3f8c' : '#2d3640';
       ctx.strokeStyle = isSel ? '#f39200' : '#ffffff';
       ctx.lineWidth = 2;
       roundRect(ctx, x - 9, y - 9, 18, 18, 4);
@@ -326,7 +362,7 @@ export class Renderer {
       ctx.font = 'bold 11px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('B', x, y + 0.5);
+      ctx.fillText(d.mode === 'tram' ? 'T' : 'B', x, y + 0.5);
     }
 
     ctx.font = '11px system-ui, sans-serif';
@@ -335,8 +371,12 @@ export class Renderer {
       if (x < -20 || y < -20 || x > cam.w + 20 || y > cam.h + 20) continue;
       const isSel = sel?.kind === 'stop' && sel.id === stop.id;
       const hover = st.hoverStop?.id === stop.id;
-      ctx.beginPath();
-      ctx.arc(x, y, stopR + (hover || isSel ? 2 : 0), 0, Math.PI * 2);
+      const r = stopR + (hover || isSel ? 2 : 0);
+      if (stop.mode === 'tram') roundRect(ctx, x - r, y - r, 2 * r, 2 * r, 3); // tram stops are square
+      else {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+      }
       ctx.fillStyle = '#ffffff';
       ctx.fill();
       ctx.lineWidth = isSel ? 3.5 : 2.5;
@@ -366,10 +406,11 @@ export class Renderer {
     }
 
     // Snap preview
-    if (st.hoverPos && !st.hoverStop && (st.tool === 'stop' || st.tool === 'line' || st.tool === 'edit' || st.tool === 'depot')) {
+    if (st.hoverPos && !st.hoverStop && ['stop', 'line', 'edit', 'depot', 'track'].includes(st.tool)) {
       const x = cam.sx(st.hoverPos.x), y = cam.sy(st.hoverPos.y);
       ctx.beginPath();
       if (st.tool === 'depot') roundRect(ctx, x - 9, y - 9, 18, 18, 4);
+      else if (st.tool === 'track') ctx.arc(x, y, 5, 0, Math.PI * 2);
       else ctx.arc(x, y, stopR, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,255,255,0.7)';
       ctx.fill();

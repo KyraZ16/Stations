@@ -42,6 +42,8 @@ export class RoadGraph {
   segLen: number[] = [];
   segSpd: number[] = [];
   segWay: number[] = [];
+  /** Segments touching each vertex (for direction-free routing, e.g. tram tracks). */
+  vSegs: number[][] = [];
   private grid = new Map<number, number[]>();
 
   vertex(osmId: number, x: number, y: number): number {
@@ -51,6 +53,7 @@ export class RoadGraph {
       this.vx.push(x);
       this.vy.push(y);
       this.out.push([]);
+      this.vSegs.push([]);
       this.vIndex.set(osmId, i);
     }
     return i;
@@ -78,6 +81,8 @@ export class RoadGraph {
     this.segLen.push(len);
     this.segSpd.push(spd);
     this.segWay.push(way);
+    this.vSegs[a].push(s);
+    this.vSegs[b].push(s);
     const x0 = Math.floor(Math.min(ax, bx) / GRID), x1 = Math.floor(Math.max(ax, bx) / GRID);
     const y0 = Math.floor(Math.min(ay, by) / GRID), y1 = Math.floor(Math.max(ay, by) / GRID);
     for (let cx = x0; cx <= x1; cx++) {
@@ -90,8 +95,8 @@ export class RoadGraph {
     }
   }
 
-  /** Nearest point on the drivable network within maxDist meters. */
-  snap(x: number, y: number, maxDist = 40): RoadPos | null {
+  /** Nearest point on the drivable network within maxDist meters (optionally only allowed segments). */
+  snap(x: number, y: number, maxDist = 40, allow?: (seg: number) => boolean): RoadPos | null {
     const r = Math.ceil(maxDist / GRID);
     const cx = Math.floor(x / GRID), cy = Math.floor(y / GRID);
     let best: RoadPos | null = null;
@@ -101,6 +106,7 @@ export class RoadGraph {
         const list = this.grid.get(cellKey(i, j));
         if (!list) continue;
         for (const s of list) {
+          if (allow && !allow(s)) continue;
           const a = this.segA[s], b = this.segB[s];
           const { d, t } = distToSegment(x, y, this.vx[a], this.vy[a], this.vx[b], this.vy[b]);
           if (d < bestD) {
@@ -212,6 +218,85 @@ export class RoadGraph {
     ys.push(b.y);
     spd.push(spdB);
     return { xs, ys, spd, time: best };
+  }
+
+  /**
+   * Shortest route that may use segments in both directions (tram tracks, track planning).
+   * Only segments passing `allow` are used; `speed` gives m/s per segment.
+   * Also returns the segments the route runs over.
+   */
+  routeSegs(
+    a: RoadPos, b: RoadPos, allow: (seg: number) => boolean, speed: (seg: number) => number,
+  ): (RouteResult & { segs: number[] }) | null {
+    const sa = a.seg, sb = b.seg;
+    if (!allow(sa) || !allow(sb)) return null;
+    if (sa === sb) {
+      const len = Math.abs(b.t - a.t) * this.segLen[sa];
+      return { xs: [a.x, b.x], ys: [a.y, b.y], spd: [speed(sa)], time: len / speed(sa), segs: [sa] };
+    }
+    const n = this.vx.length;
+    const g = new Float64Array(n).fill(Infinity);
+    const prevSeg = new Int32Array(n).fill(-1);
+    const closed = new Uint8Array(n);
+    const heap = new MinHeap();
+    const h = (v: number) => Math.hypot(this.vx[v] - b.x, this.vy[v] - b.y) / MAX_SPEED;
+    const seed = (v: number, cost: number) => {
+      if (cost < g[v]) {
+        g[v] = cost;
+        prevSeg[v] = -2;
+        heap.push(cost + h(v), v);
+      }
+    };
+    const la = this.segLen[sa], lb = this.segLen[sb];
+    seed(this.segB[sa], ((1 - a.t) * la) / speed(sa));
+    seed(this.segA[sa], (a.t * la) / speed(sa));
+    const endA = this.segA[sb], extraA = (b.t * lb) / speed(sb);
+    const endB = this.segB[sb], extraB = ((1 - b.t) * lb) / speed(sb);
+
+    let best = Infinity, bestEnd = -1;
+    while (heap.size) {
+      const v = heap.pop();
+      if (heap.lastKey >= best) break;
+      if (closed[v]) continue;
+      closed[v] = 1;
+      const gv = g[v];
+      if (v === endA && gv + extraA < best) { best = gv + extraA; bestEnd = v; }
+      if (v === endB && gv + extraB < best) { best = gv + extraB; bestEnd = v; }
+      for (const s of this.vSegs[v]) {
+        if (!allow(s)) continue;
+        const w = this.segA[s] === v ? this.segB[s] : this.segA[s];
+        const ng = gv + this.segLen[s] / speed(s);
+        if (ng < g[w]) {
+          g[w] = ng;
+          prevSeg[w] = s;
+          heap.push(ng + h(w), w);
+        }
+      }
+    }
+    if (bestEnd < 0) return null;
+
+    const verts: number[] = [];
+    const segs: number[] = [];
+    let v = bestEnd;
+    while (prevSeg[v] !== -2) {
+      const s = prevSeg[v];
+      verts.push(v);
+      segs.push(s);
+      v = this.segA[s] === v ? this.segB[s] : this.segA[s];
+    }
+    verts.push(v);
+    verts.reverse();
+    segs.reverse();
+    const xs = [a.x], ys = [a.y], spd = [speed(sa)];
+    for (const vv of verts) {
+      xs.push(this.vx[vv]);
+      ys.push(this.vy[vv]);
+    }
+    for (const s of segs) spd.push(speed(s));
+    xs.push(b.x);
+    ys.push(b.y);
+    spd.push(speed(sb));
+    return { xs, ys, spd, time: best, segs: [sa, ...segs, sb] };
   }
 }
 

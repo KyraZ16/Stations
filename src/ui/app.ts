@@ -2,7 +2,7 @@ import { MODES, ModeId, TIERS, Tier } from '../core/modes';
 import {
   LINE_COLORS, distToSegment, escapeHtml, fmtClock, fmtDist, fmtDuration, fmtMoney, fmtNum,
 } from '../core/util';
-import { RouteResult } from '../map/roadgraph';
+import { RoadPos, RouteResult } from '../map/roadgraph';
 import { Camera } from '../render/camera';
 import { RenderState, Renderer, Selection } from '../render/renderer';
 import { DRIVER_HIRE_COST, DRIVER_WAGE_DAY, Game, SHIFT_MAX, SPEEDS } from '../sim/game';
@@ -15,10 +15,12 @@ import { SAVE_KEY } from './start';
 const fmtShift = (s: number): string => `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')} h`;
 
 /** 'edit' is not in the toolbar: it is entered from the line panel. */
-type Tool = 'select' | 'stop' | 'line' | 'depot' | 'bulldoze' | 'edit';
+type Tool = 'select' | 'stop' | 'line' | 'depot' | 'bulldoze' | 'edit' | 'track';
 
-const TOOLS: { id: Exclude<Tool, 'edit'>; name: string; icon: string; key: string }[] = [
+/** `tracks: true` = only shown for modes that run on own tracks (tram). */
+const TOOLS: { id: Exclude<Tool, 'edit'>; name: string; icon: string; key: string; tracks?: boolean }[] = [
   { id: 'select', name: 'Auswählen', icon: '↖', key: 'V' },
+  { id: 'track', name: 'Gleise bauen', icon: '═', key: 'G', tracks: true },
   { id: 'stop', name: 'Haltestelle', icon: '◉', key: 'H' },
   { id: 'line', name: 'Linie zeichnen', icon: '〰', key: 'L' },
   { id: 'depot', name: 'Betriebshof', icon: '▣', key: 'B' },
@@ -26,13 +28,16 @@ const TOOLS: { id: Exclude<Tool, 'edit'>; name: string; icon: string; key: strin
 ];
 
 const HINTS: Record<Tool, string> = {
-  select: 'Klicke auf Haltestellen, Linien, Busse oder Betriebshöfe · Ziehen zum Verschieben · Mausrad zum Zoomen',
+  select: 'Klicke auf Haltestellen, Linien, Fahrzeuge oder Betriebshöfe · Ziehen zum Verschieben · Mausrad zum Zoomen',
   stop: 'Klicke auf eine Straße, um eine Haltestelle zu setzen',
   line: 'Klicke Haltestellen nacheinander an (oder auf eine Straße für eine neue) · <kbd>Enter</kbd> fertig · <kbd>Rechtsklick</kbd> letzte entfernen · erste Haltestelle erneut = Ringlinie',
   depot: 'Klicke auf eine Straße, um einen Betriebshof zu bauen',
-  bulldoze: 'Klicke auf Haltestelle, Linie oder Betriebshof, um sie zu entfernen',
+  bulldoze: 'Klicke auf Haltestelle, Linie, Betriebshof oder Gleis, um es zu entfernen',
   edit: 'Klick auf Straße oder Haltestelle fügt sie passend ein · Klick auf eine Haltestelle der Linie entfernt sie · <kbd>Enter</kbd> fertig',
+  track: 'Klicke Start- und Zielpunkt auf Straßen – das Gleis folgt den Straßen · weitere Klicks verlängern · <kbd>Rechtsklick</kbd>/<kbd>Esc</kbd> neu ansetzen',
 };
+
+const NEEDS_TRACK = 'Hier liegen keine Gleise – baue zuerst Gleise (G)';
 
 const VEHICLE_STATE: Record<Vehicle['state'], string> = {
   depot: 'Im Betriebshof',
@@ -61,6 +66,10 @@ export class App {
   private hoverPos: RenderState['hoverPos'] = null;
   private hoverStop: Stop | null = null;
   private mouseWorld: { x: number; y: number } | null = null;
+  /** Track tool: chain start and the current plan to the cursor. */
+  private trackStart: RoadPos | null = null;
+  private trackPlan: ReturnType<Game['planTrack']> = null;
+  private trackPlanKey = '';
 
   private drag: { x: number; y: number; moved: boolean; button: number } | null = null;
   private last = performance.now();
@@ -114,6 +123,7 @@ export class App {
       mouseWorld: this.mouseWorld,
       selected: this.selected,
       coverage: this.coverage,
+      trackPlan: this.tool === 'track' && this.trackPlan ? this.trackPlan.route : null,
     });
     this.panelTimer += dt;
     if (this.panelTimer > 0.4 || this.panelDirty) {
@@ -171,10 +181,11 @@ export class App {
         return;
       }
       const k = e.key.toLowerCase();
-      const tool = TOOLS.find((t) => t.key.toLowerCase() === k);
+      const tool = TOOLS.find((t) => t.key.toLowerCase() === k && (!t.tracks || this.modeUsesTracks()));
       if (tool) this.setTool(tool.id);
       else if (k === 'escape') {
         if (this.draft.stops.length) this.cancelDraft();
+        else if (this.tool === 'track' && this.trackStart) this.resetTrack();
         else if (this.tool !== 'select') this.setTool('select');
         else this.select(null);
       } else if (k === 'enter' && this.tool === 'line') this.finishDraft();
@@ -203,9 +214,72 @@ export class App {
     this.hoverStop = null;
     this.hoverPos = null;
     if (this.tool === 'select') return;
-    this.hoverStop = this.game.stopAt(w.x, w.y, 12 / this.cam.scale);
+    if (this.tool === 'track') {
+      this.hoverPos = this.game.map.graph.snap(w.x, w.y, this.snapDist());
+      this.updateTrackPlan();
+      return;
+    }
+    const mode = this.toolMode();
+    this.hoverStop = this.game.stopAt(w.x, w.y, 12 / this.cam.scale, this.tool === 'bulldoze' ? undefined : mode);
     if (this.tool === 'stop' || this.tool === 'line' || this.tool === 'edit' || this.tool === 'depot') {
-      this.hoverPos = this.game.map.graph.snap(w.x, w.y, Math.max(25, 20 / this.cam.scale));
+      this.hoverPos = this.game.snapFor(mode, w.x, w.y, this.snapDist());
+    }
+  }
+
+  private snapDist(): number {
+    return Math.max(25, 20 / this.cam.scale);
+  }
+
+  private modeUsesTracks(): boolean {
+    return MODES[this.mode].infra === 'tramtrack';
+  }
+
+  /** Mode the current tool builds for (the edited line's mode while editing). */
+  private toolMode(): ModeId {
+    const l = this.tool === 'edit' && this.editLineId !== null ? this.game.lines.get(this.editLineId) : undefined;
+    return l ? l.mode : this.mode;
+  }
+
+  /** Snap for building stops/depots of a mode, with a helpful error if nothing fits. */
+  private snapBuild(mode: ModeId, x: number, y: number): RoadPos | null {
+    const pos = this.game.snapFor(mode, x, y, this.snapDist());
+    if (!pos) this.toast(MODES[mode].infra === 'tramtrack' ? NEEDS_TRACK : 'Hier ist keine befahrbare Straße', 'error');
+    return pos;
+  }
+
+  private updateTrackPlan(): void {
+    const a = this.trackStart, b = this.hoverPos;
+    if (!a || !b) {
+      this.trackPlan = null;
+      this.trackPlanKey = '';
+      return;
+    }
+    const key = `${b.seg}:${b.t.toFixed(2)}`;
+    if (key === this.trackPlanKey) return;
+    this.trackPlanKey = key;
+    this.trackPlan = this.game.planTrack(a, b);
+    this.panelDirty = true;
+  }
+
+  private resetTrack(): void {
+    this.trackStart = null;
+    this.trackPlan = null;
+    this.trackPlanKey = '';
+    this.panelDirty = true;
+  }
+
+  private trackClick(x: number, y: number): void {
+    const pos = this.game.map.graph.snap(x, y, this.snapDist());
+    if (!pos) return this.toast('Gleise können nur auf Straßen verlegt werden', 'error');
+    if (!this.trackStart) {
+      this.trackStart = pos;
+      this.panelDirty = true;
+      return;
+    }
+    if (this.game.buildTrack(this.trackStart, pos)) {
+      this.trackStart = pos;
+      this.trackPlan = null;
+      this.trackPlanKey = '';
     }
   }
 
@@ -218,19 +292,19 @@ export class App {
         this.select(this.pick(w.x, w.y));
         break;
       case 'stop': {
-        if (g.stopAt(w.x, w.y, r)) {
+        if (g.stopAt(w.x, w.y, r, this.mode)) {
           this.select(this.pick(w.x, w.y));
           return;
         }
-        const pos = g.map.graph.snap(w.x, w.y, Math.max(25, 20 / this.cam.scale));
-        if (!pos) return this.toast('Hier ist keine befahrbare Straße', 'error');
+        const pos = this.snapBuild(this.mode, w.x, w.y);
+        if (!pos) return;
         const s = g.addStop(pos, this.mode);
         if (s) this.selected = { kind: 'stop', id: s.id };
         break;
       }
       case 'depot': {
-        const pos = g.map.graph.snap(w.x, w.y, Math.max(25, 20 / this.cam.scale));
-        if (!pos) return this.toast('Hier ist keine befahrbare Straße', 'error');
+        const pos = this.snapBuild(this.mode, w.x, w.y);
+        if (!pos) return;
         const d = g.addDepot(pos, this.mode);
         if (d) {
           this.select({ kind: 'depot', id: d.id });
@@ -244,11 +318,16 @@ export class App {
       case 'edit':
         this.editClick(w.x, w.y);
         break;
+      case 'track':
+        this.trackClick(w.x, w.y);
+        break;
       case 'bulldoze': {
         const p = this.pick(w.x, w.y, false);
         if (p) {
           this.selected = p;
           this.deleteSelected();
+        } else {
+          g.removeTrackAt(w.x, w.y, 10 / this.cam.scale);
         }
         break;
       }
@@ -257,7 +336,9 @@ export class App {
   }
 
   private rightClick(): void {
-    if (this.tool === 'line' && this.draft.stops.length) {
+    if (this.tool === 'track' && this.trackStart) {
+      this.resetTrack();
+    } else if (this.tool === 'line' && this.draft.stops.length) {
       this.draft.stops.pop();
       this.draft.paths.pop();
       this.draft.circular = false;
@@ -306,10 +387,10 @@ export class App {
   private lineClick(x: number, y: number): void {
     const g = this.game;
     const d = this.draft;
-    let stop = g.stopAt(x, y, 12 / this.cam.scale);
+    let stop = g.stopAt(x, y, 12 / this.cam.scale, this.mode);
     if (!stop) {
-      const pos = g.map.graph.snap(x, y, Math.max(25, 20 / this.cam.scale));
-      if (!pos) return this.toast('Hier ist keine befahrbare Straße', 'error');
+      const pos = this.snapBuild(this.mode, x, y);
+      if (!pos) return;
       stop = g.addStop(pos, this.mode);
       if (!stop) return;
     }
@@ -346,7 +427,7 @@ export class App {
     const g = this.game;
     const line = this.editLineId !== null ? g.lines.get(this.editLineId) : undefined;
     if (!line) return this.setTool('select');
-    let stop = g.stopAt(x, y, 12 / this.cam.scale);
+    let stop = g.stopAt(x, y, 12 / this.cam.scale, line.mode);
     if (stop && line.stopIds.includes(stop.id)) {
       if (line.stopIds.length <= 2) return this.toast('Eine Linie braucht mindestens zwei Haltestellen', 'error');
       const id = stop.id;
@@ -355,8 +436,8 @@ export class App {
     }
     let created = false;
     if (!stop) {
-      const pos = g.map.graph.snap(x, y, Math.max(25, 20 / this.cam.scale));
-      if (!pos) return this.toast('Hier ist keine befahrbare Straße', 'error');
+      const pos = this.snapBuild(line.mode, x, y);
+      if (!pos) return;
       stop = g.addStop(pos, line.mode);
       if (!stop) return;
       created = true;
@@ -398,15 +479,16 @@ export class App {
     this.draft = { stops: [], paths: [], circular: false };
     this.setTool('select');
     this.select({ kind: 'line', id: line.id });
-    if (this.game.depots.size) {
-      // Equip the line for its default timetable: buses for the peak, drivers for the shifts.
+    const tram = line.mode === 'tram';
+    if ([...this.game.depots.values()].some((d) => d.mode === line.mode)) {
+      // Equip the line for its default timetable: vehicles for the peak, drivers for the shifts.
       this.game.assignMissing(line);
       const hired = this.game.hireMissingDrivers();
       const n = this.game.vehiclesOf(line).length;
-      this.toast(`Linie ${line.name} erstellt – ${n} ${n === 1 ? 'Bus' : 'Busse'} zugewiesen` +
-        (hired ? `, ${hired} Fahrer eingestellt` : ''));
+      const word = tram ? (n === 1 ? 'Tram' : 'Trams') : n === 1 ? 'Bus' : 'Busse';
+      this.toast(`Linie ${line.name} erstellt – ${n} ${word} zugewiesen` + (hired ? `, ${hired} Fahrer eingestellt` : ''));
     } else {
-      this.toast(`Linie ${line.name} erstellt – baue einen Betriebshof, um Busse einzusetzen`);
+      this.toast(`Linie ${line.name} erstellt – baue einen ${tram ? 'Tram-Betriebshof' : 'Betriebshof'}, um Fahrzeuge einzusetzen`);
     }
   }
 
@@ -420,6 +502,10 @@ export class App {
   private setTool(t: Tool): void {
     if (this.tool === 'line' && t !== 'line' && this.draft.stops.length) this.cancelDraft();
     if (t !== 'edit') this.editLineId = null;
+    if (t === 'track' && !this.modeUsesTracks()) t = 'select';
+    this.trackStart = null;
+    this.trackPlan = null;
+    this.trackPlanKey = '';
     this.tool = t;
     this.canvas.classList.toggle('crosshair', t !== 'select');
     this.hint.innerHTML = HINTS[t];
@@ -427,6 +513,38 @@ export class App {
     this.hoverStop = null;
     this.renderToolbar();
     this.panelDirty = true;
+  }
+
+  private switchMode(mode: ModeId): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    if (this.draft.stops.length) this.cancelDraft();
+    // Keep the building tool, but leave tools the new mode does not have
+    this.setTool(this.tool === 'track' || this.tool === 'edit' ? 'select' : this.tool);
+    if (mode === 'tram' && !this.game.tracks.size) {
+      this.toast('Trams brauchen Gleise: baue sie mit „Gleise bauen“ (G) auf Straßen');
+    }
+  }
+
+  private trackHtml(): string {
+    const g = this.game;
+    const plan = this.trackPlan;
+    const perM = MODES.tram.trackCostPerM ?? 0;
+    return `
+      <h2>═ Gleise bauen</h2>
+      <div class="hint">Gleise liegen auf Straßen und können in beide Richtungen befahren werden.
+        Klicke einen Startpunkt, dann weitere Punkte – das Gleis folgt dem kürzesten Straßenweg.</div>
+      <div class="kv" style="margin-top:10px">
+        <span>Kosten</span><span>${fmtMoney(perM * 1000)}/km</span>
+        <span>Gleisnetz gesamt</span><span>${fmtDist(g.trackLength)}</span>
+        ${this.trackStart ? `
+          <span>Geplant (neu)</span><span>${plan ? fmtDist(plan.newLength) : '–'}</span>
+          <span>Baukosten</span><span class="${plan && !g.canAfford(plan.cost) ? 'neg' : ''}">${plan ? fmtMoney(plan.cost) : '–'}</span>` : ''}
+      </div>
+      <div class="hint" style="margin-top:8px">${this.trackStart
+        ? 'Klicke den nächsten Punkt. Rechtsklick oder Esc setzt neu an.'
+        : 'Klicke auf eine Straße, um zu beginnen.'}</div>
+      <div class="hint" style="margin-top:8px">Danach: Tram-Haltestellen (H) und einen Tram-Betriebshof (B) auf die Gleise setzen, dann eine Linie (L) zeichnen.</div>`;
   }
 
   private setSpeed(s: number): void {
@@ -455,7 +573,7 @@ export class App {
       g.removeStop(s.id);
     } else if (s.kind === 'line') {
       const l = g.lines.get(s.id);
-      if (l && !confirm(`Linie ${l.name} löschen? Die Busse fahren zurück in den Betriebshof.`)) return;
+      if (l && !confirm(`Linie ${l.name} löschen? Die Fahrzeuge fahren zurück in den Betriebshof.`)) return;
       g.deleteLine(s.id);
     } else if (s.kind === 'depot') {
       g.removeDepot(s.id);
@@ -499,14 +617,14 @@ export class App {
       case 'tier': {
         this.tier = el.dataset.id as Tier;
         const first = Object.values(MODES).find((m) => m.tier === this.tier && m.available);
-        if (first) this.mode = first.id;
+        if (first) this.switchMode(first.id);
         this.renderToolbar();
         break;
       }
       case 'mode': {
         const m = MODES[el.dataset.id as ModeId];
         if (!m.available) this.toast(`${m.name} ist noch in Planung – kommt in einer späteren Version`);
-        else this.mode = m.id;
+        else this.switchMode(m.id);
         this.renderToolbar();
         break;
       }
@@ -655,7 +773,7 @@ export class App {
       </div>
       <div class="toolbar-section">Werkzeuge</div>
       <div class="tools">
-        ${TOOLS.map((t) => `<button data-act="tool" data-id="${t.id}" class="${t.id === this.tool ? 'on' : ''}">
+        ${TOOLS.filter((t) => !t.tracks || this.modeUsesTracks()).map((t) => `<button data-act="tool" data-id="${t.id}" class="${t.id === this.tool ? 'on' : ''}">
           <span class="ic">${t.icon}</span>${t.name}<kbd>${t.key}</kbd></button>`).join('')}
       </div>
       <div class="toolbar-section">Ansicht</div>
@@ -694,6 +812,7 @@ export class App {
   private panelHtml(): string {
     const g = this.game;
     if (this.tool === 'line') return this.draftHtml();
+    if (this.tool === 'track') return this.trackHtml();
     if (this.tool === 'edit' && this.editLineId !== null && g.lines.has(this.editLineId)) {
       return this.editHtml(this.editLineId);
     }
@@ -740,7 +859,7 @@ export class App {
         <div class="row" data-act="select-line" data-id="${l.id}">
           <span class="badge" style="background:${l.color}">${escapeHtml(l.name)}</span>
           ${escapeHtml(g.stops.get(l.stopIds[0])?.name ?? '')} – ${escapeHtml(g.stops.get(l.stopIds[l.circular ? 0 : l.stopIds.length - 1])?.name ?? '')}
-          <span class="meta">${g.vehiclesOf(l).length} 🚌 · ${fmtNum(l.passengersToday)}</span>
+          <span class="meta">${g.vehiclesOf(l).length} ${MODES[l.mode].icon} · ${fmtNum(l.passengersToday)}</span>
         </div>`).join('') || '<div class="hint">Noch keine Linien.</div>'}
       <div class="actions"><button class="btn primary" data-act="new-line">+ Neue Linie</button></div>
       <h3>Betriebshöfe</h3>
@@ -817,10 +936,13 @@ export class App {
   private lineWarnings(l: TransitLine): string[] {
     const g = this.game;
     const w: string[] = [];
-    if (!g.depots.size) w.push('Kein Betriebshof – baue einen, um Busse einzusetzen');
+    if (![...g.depots.values()].some((d) => d.mode === l.mode)) {
+      w.push(l.mode === 'tram' ? 'Kein Tram-Betriebshof – baue einen an den Gleisen' : 'Kein Betriebshof – baue einen, um Busse einzusetzen');
+    }
     const missing = g.peakVehicles(l) - g.vehiclesOf(l).length;
-    if (missing > 0) w.push(`${missing} ${missing === 1 ? 'Bus fehlt' : 'Busse fehlen'} für den Fahrplan`);
-    if (l.driverShortage) w.push('Fahrermangel – Busse bleiben im Betriebshof');
+    const vname = l.mode === 'tram' ? ['Tram fehlt', 'Trams fehlen'] : ['Bus fehlt', 'Busse fehlen'];
+    if (missing > 0) w.push(`${missing} ${missing === 1 ? vname[0] : vname[1]} für den Fahrplan`);
+    if (l.driverShortage) w.push('Fahrermangel – Fahrzeuge bleiben im Betriebshof');
     return w;
   }
 
@@ -856,7 +978,7 @@ export class App {
       <div class="kv" style="margin-top:12px">
         <span>Jetzt</span><span>${pi < 0 ? 'Betriebsruhe' : PERIODS[pi].name}</span>
         <span>Takt aktuell</span><span>${isFinite(hw) ? 'alle ' + fmtDuration(hw) : '–'}</span>
-        <span>Busse im Einsatz</span><span>${g.activeVehicles(l)} / ${g.requiredVehicles(l)} benötigt</span>
+        <span>Im Einsatz</span><span>${g.activeVehicles(l)} / ${g.requiredVehicles(l)} benötigt</span>
         <span>Kapazität</span><span>${fmtNum(capPerHour)} Plätze/h</span>
         <span>Umlaufzeit</span><span>${fmtDuration(l.cycleTime)}</span>
         <span>Streckenlänge (Umlauf)</span><span>${fmtDist(len)}</span>
@@ -870,7 +992,7 @@ export class App {
         <button class="btn" data-act="veh-add">+</button>
         <span class="hint">Spitzenbedarf: <b>${g.peakVehicles(l)}</b></span>
       </div>
-      ${vs.map((v) => `<div class="row" data-act="select-vehicle" data-id="${v.id}">🚌 ${escapeHtml(v.name)}
+      ${vs.map((v) => `<div class="row" data-act="select-vehicle" data-id="${v.id}">${MODES[v.mode].icon} ${escapeHtml(v.name)}
         <span class="meta">${v.state === 'depot' ? 'Reserve' : `${v.passengers.length}/${cap} · ${this.vehicleStatus(v)}`}</span></div>`).join('')}
       <div class="actions"><button class="btn danger" data-act="delete">Linie löschen</button></div>`;
   }
@@ -895,7 +1017,7 @@ export class App {
         <select data-field="tt-end">${endOpts.map((h) => `<option value="${h}" ${h === tt.end ? 'selected' : ''}>${fmtHour(h)}${h >= 24 ? ' Uhr (+1)' : ''}</option>`).join('')}</select>
       </div>
       <table class="tt">
-        <tr><th>Zeitraum</th><th>Takt</th><th>Busse</th></tr>
+        <tr><th>Zeitraum</th><th>Takt</th><th>Fahrz.</th></tr>
         ${PERIODS.map((p, i) => {
           const b = periodBounds(tt, i);
           if (!b) return '';
@@ -908,16 +1030,16 @@ export class App {
       </table>
       <div class="kv" style="margin-top:10px">
         <span>Umlaufzeit</span><span>${fmtDuration(l.cycleTime)}</span>
-        <span>Spitzenbedarf</span><span>${g.peakVehicles(l)} Busse</span>
-        <span>Im Pool</span><span>${g.vehiclesOf(l).length} Busse</span>
+        <span>Spitzenbedarf</span><span>${g.peakVehicles(l)} Fahrzeuge</span>
+        <span>Im Pool</span><span>${g.vehiclesOf(l).length} Fahrzeuge</span>
         <span>Fahrzeugstunden/Tag</span><span>${fmtNum(vehicleHours(tt, l.cycleTime))} h</span>
       </div>
       <div class="actions">
-        ${missing > 0 ? `<button class="btn primary" data-act="assign-missing">${missing === 1 ? 'Fehlenden Bus' : `${missing} fehlende Busse`} zuweisen</button>` : ''}
+        ${missing > 0 ? `<button class="btn primary" data-act="assign-missing">${missing === 1 ? 'Fehlendes Fahrzeug' : `${missing} fehlende Fahrzeuge`} zuweisen</button>` : ''}
         <button class="btn" data-act="hire-missing">Fehlende Fahrer einstellen</button>
       </div>
-      <div class="hint" style="margin-top:8px">Die Disposition schickt nur so viele Busse aus dem Pool los, wie der Takt braucht.
-        Überzählige Busse fahren an der Endhaltestelle zurück in den Betriebshof.</div>`;
+      <div class="hint" style="margin-top:8px">Die Disposition schickt nur so viele Fahrzeuge aus dem Pool los, wie der Takt braucht.
+        Überzählige fahren an der Endhaltestelle zurück in den Betriebshof.</div>`;
   }
 
   private lineStopsHtml(l: TransitLine): string {
@@ -948,7 +1070,7 @@ export class App {
     return `
       <h2><span class="badge" style="background:${l.color}">${escapeHtml(l.name)}</span> Strecke bearbeiten</h2>
       <div class="hint">Klick auf eine <b>Straße oder Haltestelle</b> fügt sie an der passenden Stelle ein.
-        Klick auf eine <b>Haltestelle der Linie</b> nimmt sie heraus. Busse fahren ohne Unterbrechung weiter.</div>
+        Klick auf eine <b>Haltestelle der Linie</b> nimmt sie heraus. Fahrzeuge fahren ohne Unterbrechung weiter.</div>
       <div class="kv" style="margin-top:10px">
         <span>Haltestellen</span><span>${n}</span>
         <span>Streckenlänge (Umlauf)</span><span>${fmtDist(len)}</span>
@@ -982,7 +1104,7 @@ export class App {
     }
     const load = v.passengers.length / def.capacity;
     return `
-      <h2>🚌 Fahrzeug <button class="close" data-act="close">×</button></h2>
+      <h2>${MODES[v.mode].icon} Fahrzeug <button class="close" data-act="close">×</button></h2>
       <input type="text" data-field="name" value="${escapeHtml(v.name)}">
       <div class="kv" style="margin-top:10px">
         <span>Typ</span><span>${def.name}</span>
@@ -1024,7 +1146,7 @@ export class App {
       <h3>Fahrzeuge</h3>
       ${vs.map((v) => {
         const l = v.lineId !== null ? g.lines.get(v.lineId) : undefined;
-        return `<div class="row" data-act="select-vehicle" data-id="${v.id}">🚌 ${escapeHtml(v.name)}
+        return `<div class="row" data-act="select-vehicle" data-id="${v.id}">${MODES[v.mode].icon} ${escapeHtml(v.name)}
           <span class="meta">${l ? `<span class="badge" style="background:${l.color}">${escapeHtml(l.name)}</span>` : 'frei'}</span></div>`;
       }).join('') || '<div class="hint">Keine Fahrzeuge. Kaufe einen Bus oder nutze „+“ im Linien-Panel.</div>'}
       <div class="actions"><button class="btn danger" data-act="delete">Abreißen</button></div>`;
