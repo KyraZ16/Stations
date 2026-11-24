@@ -41,4 +41,5 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] Leben im Betriebshof: Fahrzeuge fahren durch die Einfahrt über die Fahrwege zu ihrem Heim-Stellplatz, in die Werkstatt (2 Spuren), durch die Waschanlage und wieder hinaus; Abstand halten, Vorfahrt bei Gegenverkehr, Stau bei engen Layouts; Ladestationen laden den Bus auf dem Stellplatz daneben
 - [x] Ladescreen mit Schritten, Fortschritt, Abbrechen und Erneut versuchen
 - [x] Bessere 3D-Optik im Betriebshof: prozedurale Busse (Räder, Türen, Fensterband, Lichter, Zielanzeige; Gelenkbus mit Faltenbalg, E-Bus mit Akkus) und Trams, Sozialgebäude mit Fensterbändern, Stahlhallen, Ladesäulen; Tag/Nacht nach Spielzeit mit Laternen, leuchtenden Fenstern und Scheinwerfern; Straße, Gehwege, Bäume, strukturierte Oberflächen
+- [x] Bessere Kartenansicht: Straßennamen entlang der Straßen (nach Bedeutung und Zoom, ohne Überlappung), Linien auf gemeinsamen Straßen nebeneinander wie im Netzplan, Fahrzeuge größer mit Liniennummer, Minikarte unten links (Klicken/Ziehen springt), Hinweise in der Übersicht umbrechen
 - [ ] U-Bahn, Kampagne

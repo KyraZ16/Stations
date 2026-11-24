@@ -18,7 +18,6 @@ public partial class NetworkLayer : Node2D
 
     private bool IsSel(string kind, int id) => UI.Selected is Selection s && s.Kind == kind && s.Id == id;
 
-    private readonly Dictionary<Run, Vector2[]> _runCache = new();
     private Vector2[] _trackSegs = Array.Empty<Vector2>();
     private int _trackVersion = -1;
     private Font _font = null!;
@@ -34,9 +33,9 @@ public partial class NetworkLayer : Node2D
         DrawTrackPlan(px);
         DrawLines(px);
         DrawDraft(px);
-        DrawVehicles(px);
         DrawDepots(px);
         DrawStops(px);
+        DrawVehicles(px); // on top of stops, so vehicles waiting at a terminus stay visible
         DrawSnapPreview(px);
         DrawSetTransform(Vector2.Zero);
     }
@@ -107,31 +106,29 @@ public partial class NetworkLayer : Node2D
         DrawMultiline(_trackSegs, Palette.TrackInner, Mathf.Max(4.5f, 8 * px));
     }
 
-    private Vector2[] RunPoints(Run run)
-    {
-        if (_runCache.TryGetValue(run, out var pts)) return pts;
-        pts = new Vector2[run.Path.Count];
-        for (int i = 0; i < pts.Length; i++) pts[i] = new Vector2((float)run.Path.Xs[i], (float)run.Path.Ys[i]);
-        if (_runCache.Count > 500) _runCache.Clear(); // runs are replaced when lines are edited
-        _runCache[run] = pts;
-        return pts;
-    }
+    private readonly LineBundles _bundles = new();
 
+    /// <summary>Lines on shared streets run side by side: all casings first, then the colours on top.</summary>
     private void DrawLines(float px)
     {
-        foreach (var line in Game.Lines.Values)
+        _bundles.Update(Game);
+        float slot = 5.5f * px;
+        var shapes = new List<(Vector2[] Pts, TransitLine Line)>();
+        foreach (var line in Game.Lines.Values.OrderBy(l => l.Id))
+            foreach (var run in line.Runs)
+            {
+                var pts = _bundles.Shifted(run, slot);
+                if (pts.Length >= 2) shapes.Add((pts, line));
+            }
+        foreach (var (pts, line) in shapes)
+            DrawPolyline(pts, Colors.White, (IsSel("line", line.Id) ? 10 : 7.5f) * px);
+        foreach (var (pts, line) in shapes)
         {
             bool sel = IsSel("line", line.Id);
             bool active = double.IsFinite(Game.Headway(line));
             var color = new Color(line.Color) { A = active ? 1 : 0.55f };
-            foreach (var run in line.Runs)
-            {
-                var pts = RunPoints(run);
-                if (pts.Length < 2) continue;
-                DrawPolyline(pts, Colors.White, (sel ? 10 : 7) * px);
-                if (active) DrawPolyline(pts, color, (sel ? 6 : 4) * px);
-                else for (int i = 0; i + 1 < pts.Length; i++) DrawDashedLine(pts[i], pts[i + 1], color, 4 * px, 8 * px);
-            }
+            if (active) DrawPolyline(pts, color, (sel ? 6 : 4) * px);
+            else for (int i = 0; i + 1 < pts.Length; i++) DrawDashedLine(pts[i], pts[i + 1], color, 4 * px, 8 * px);
         }
     }
 
@@ -141,11 +138,16 @@ public partial class NetworkLayer : Node2D
         {
             if (Game.InYard(v)) continue; // shown in the 3D yard, not on the map
             var def = v.Def;
-            float len = Mathf.Max((float)def.Length, 15 * px), wid = Mathf.Max((float)def.Width, 7 * px);
+            float len = Mathf.Max((float)def.Length, 24 * px), wid = Mathf.Max((float)def.Width, 13 * px);
             bool sel = IsSel("vehicle", v.Id);
             var line = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? l : null;
             bool lineColor = line != null && (v.State != VehicleState.Deadhead || v.DeadheadTo == DeadheadTarget.Rejoin);
-            DrawSetTransform(new Vector2((float)v.X, (float)v.Y), (float)v.Ang);
+            // Vehicles in service ride on their line's slot in a bundle of parallel lines
+            var center = new Vector2((float)v.X, (float)v.Y);
+            if (line != null && v.State is VehicleState.Moving or VehicleState.Dwell or VehicleState.Layover && v.RunIdx < line.Runs.Count &&
+                _bundles.Runs.TryGetValue(line.Runs[v.RunIdx], out var bundle) && bundle.Off.Length > 0)
+                center += bundle.Off[Math.Min(v.Seg, bundle.Off.Length - 1)] * 5.5f * px;
+            DrawSetTransform(center, (float)v.Ang);
             var body = new Rect2(-len / 2, -wid / 2, len, wid);
             DrawRect(body, lineColor ? new Color(line!.Color) : new Color("7d8590"));
             // Load indicator: white fill grows with occupancy
@@ -158,6 +160,16 @@ public partial class NetworkLayer : Node2D
             DrawRect(new Rect2(len / 2 - nose, -wid / 2, nose, wid), Palette.Ink);
             bool broken = v.State == VehicleState.Broken;
             DrawRect(body, sel ? Palette.Highlight : broken ? new Color("e53935") : Palette.Ink, false, (sel || broken ? 3 : 1.6f) * px);
+
+            // Line number as a small dark badge (screen-sized, upright) once zoomed in a bit
+            if (lineColor && Zoom > 0.45f)
+            {
+                DrawSetTransform(center, 0, new Vector2(px, px));
+                var size = _font.GetStringSize(line!.Name, HorizontalAlignment.Left, -1, 11);
+                float w = Mathf.Max(size.X + 6, 14);
+                DrawRect(new Rect2(-w / 2, -7, w, 14), Palette.Ink);
+                DrawString(_font, new Vector2(-size.X / 2, 4), line.Name, HorizontalAlignment.Left, -1, 11, Colors.White);
+            }
         }
         DrawSetTransform(Vector2.Zero);
     }

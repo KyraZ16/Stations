@@ -56,6 +56,7 @@ public partial class GameView : Node
         ui.AddChild(top);
         ui.AddChild(new ToolBar { UI = _ui });
         ui.AddChild(new SidePanel { UI = _ui });
+        ui.AddChild(new MiniMap { Game = Game, Map = _map });
 
         _hint = Ui.Label("", 13, Colors.White);
         var hintBox = new PanelContainer();

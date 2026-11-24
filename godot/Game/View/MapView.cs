@@ -16,6 +16,7 @@ public partial class MapView : Node2D
     private RoadLayer _roads = null!;
     private NetworkLayer _network = null!;
     private CoverageLayer _coverage = null!;
+    private LabelLayer _labels = null!;
 
     /// <summary>Show or hide the catchment overlay.</summary>
     public bool CoverageVisible { set => _coverage.Visible = value; }
@@ -40,6 +41,8 @@ public partial class MapView : Node2D
         AddChild(_coverage);
         _roads = new RoadLayer { Map = Game.Map };
         AddChild(_roads);
+        _labels = new LabelLayer { Map = Game.Map };
+        AddChild(_labels);
         AddChild(new OutsideMask { Half = (float)Game.Map.Half });
         _network = new NetworkLayer { Game = Game, UI = UI };
         AddChild(_network);
@@ -63,6 +66,7 @@ public partial class MapView : Node2D
         z = Mathf.Clamp(z, _minZoom, MaxZoom);
         _cam.Zoom = new Vector2(z, z);
         _roads.Zoom = z;
+        _labels.Zoom = z;
         _network.Zoom = z;
     }
 
@@ -71,6 +75,13 @@ public partial class MapView : Node2D
     public void ZoomBy(float factor) => SetZoom(_cam.Zoom.X * factor);
 
     public void MakeCameraCurrent() => _cam.MakeCurrent();
+
+    /// <summary>Visible part of the world (for the mini-map).</summary>
+    public Rect2 ViewRect()
+    {
+        var size = GetViewportRect().Size / _cam.Zoom.X;
+        return new Rect2(_cam.Position - size / 2, size);
+    }
 
     private Vector2 ClampToMap(Vector2 p)
     {

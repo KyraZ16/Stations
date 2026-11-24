@@ -228,8 +228,7 @@ public partial class SidePanel : PanelContainer
         {
             Space();
             Add(Ui.Section("Hinweise"));
-            foreach (var (text, go, badge) in warnings)
-                Ui.Row(_box, text, "", go, badge).GetParent().GetChild<Label>(badge == null ? 0 : 1).AddThemeColorOverride("font_color", new Color("8a4b00"));
+            foreach (var (text, go, badge) in warnings) WarnRow(text, go, badge);
         }
 
         Space();
@@ -249,6 +248,22 @@ public partial class SidePanel : PanelContainer
         if (G.Depots.Count == 0) Hint("Noch kein Betriebshof.");
         foreach (var d in G.Depots.Values.OrderBy(d => d.Id))
             Ui.Row(_box, d.Name, $"{G.Vehicles.Values.Count(v => v.DepotId == d.Id)} Fahrzeuge", () => UI.Select(new("depot", d.Id)));
+    }
+
+    /// <summary>Clickable warning line that wraps instead of being cut off.</summary>
+    private void WarnRow(string text, Action go, Control? badge)
+    {
+        var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Stop, MouseDefaultCursorShape = CursorShape.PointingHand };
+        row.AddThemeConstantOverride("separation", 8);
+        if (badge != null) { badge.MouseFilter = MouseFilterEnum.Ignore; row.AddChild(badge); }
+        var l = Ui.Label(text, 13, new Color("8a4b00"));
+        l.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        l.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        l.CustomMinimumSize = new Vector2(badge == null ? 310 : 270, 0);
+        l.MouseFilter = MouseFilterEnum.Ignore;
+        row.AddChild(l);
+        row.GuiInput += e => { if (e is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true }) go(); };
+        Add(row);
     }
 
     private void FocusLine(TransitLine l)

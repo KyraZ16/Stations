@@ -92,7 +92,12 @@ public partial class Main : Node
         {
             var ui = _view!.Interaction;
             if (sel == "depot" && game.Depots.Count > 0) ui.Select(new Selection("depot", game.Depots.Values.First().Id));
-            if (sel == "vehicle" && game.Vehicles.Count > 0) ui.Select(new Selection("vehicle", game.Vehicles.Values.MinBy(v => v.Condition)!.Id));
+            if (sel == "vehicle" && game.Vehicles.Count > 0)
+            {
+                var veh = game.Vehicles.Values.Where(v => v.State == VehicleState.Moving).DefaultIfEmpty(game.Vehicles.Values.First()).MinBy(v => v!.Condition)!;
+                ui.Select(new Selection("vehicle", veh.Id));
+                ui.Map.CenterOn(new Vector2((float)veh.X, (float)veh.Y));
+            }
             if (sel == "line" && game.Lines.Count > 0) ui.Select(new Selection("line", game.Lines.Values.First().Id));
         }
         if (_dev.TryGetValue("shot", out var shot)) TakeShot(shot);
