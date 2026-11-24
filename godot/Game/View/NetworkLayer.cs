@@ -13,8 +13,10 @@ public partial class NetworkLayer : Node2D
     public Game Game = null!;
     /// <summary>Camera zoom in pixels per meter.</summary>
     public float Zoom = 1;
-    /// <summary>Highlighted line/stop/vehicle/depot id (selection), or null.</summary>
-    public (string Kind, int Id)? Selected;
+    /// <summary>Tool state: selection, drafts and hover feedback.</summary>
+    public Interaction UI = null!;
+
+    private bool IsSel(string kind, int id) => UI.Selected is Selection s && s.Kind == kind && s.Id == id;
 
     private readonly Dictionary<Run, Vector2[]> _runCache = new();
     private Vector2[] _trackSegs = Array.Empty<Vector2>();
@@ -29,10 +31,61 @@ public partial class NetworkLayer : Node2D
     {
         float px = 1 / Zoom; // one screen pixel in world meters
         DrawTracks(px);
+        DrawTrackPlan(px);
         DrawLines(px);
+        DrawDraft(px);
         DrawVehicles(px);
         DrawDepots(px);
         DrawStops(px);
+        DrawSnapPreview(px);
+        DrawSetTransform(Vector2.Zero);
+    }
+
+    private static Vector2 V(double x, double y) => new((float)x, (float)y);
+
+    private void DrawDashedPolyline(IReadOnlyList<Vector2> pts, Color c, float width, float dash)
+    {
+        for (int i = 0; i + 1 < pts.Count; i++) DrawDashedLine(pts[i], pts[i + 1], c, width, dash);
+    }
+
+    private void DrawTrackPlan(float px)
+    {
+        if (UI.Tool != Tool.Track || UI.TrackPlan is not TrackPlan plan) return;
+        var pts = plan.Route.Xs.Select((x, i) => V(x, plan.Route.Ys[i])).ToList();
+        DrawDashedPolyline(pts, new Color(Palette.TrackOuter, 0.6f), Mathf.Max(7.5f, 12 * px), 8 * px);
+    }
+
+    /// <summary>Line being drawn: routed legs dashed in the next line color, plus a hint line to the cursor.</summary>
+    private void DrawDraft(float px)
+    {
+        if (UI.DraftStops.Count == 0) return;
+        var color = new Color(Util.LineColors[Game.Lines.Count % Util.LineColors.Length]);
+        foreach (var d in UI.DraftPaths)
+            DrawDashedPolyline(d.Xs.Select((x, i) => V(x, d.Ys[i])).ToList(), color, 4 * px, 10 * px);
+        var last = UI.DraftStops[^1].Pos;
+        Vector2? target = UI.HoverStop is Stop hs ? V(hs.Pos.X, hs.Pos.Y)
+            : UI.HoverPos is { } hp ? V(hp.X, hp.Y) : UI.MouseWorld;
+        if (target is Vector2 t) DrawDashedLine(V(last.X, last.Y), t, new Color(color, 0.5f), 4 * px, 10 * px);
+    }
+
+    /// <summary>Ghost of the stop/depot that a click would place.</summary>
+    private void DrawSnapPreview(float px)
+    {
+        if (UI.HoverPos is not { } p || UI.HoverStop != null) return;
+        if (UI.Tool is not (Tool.Stop or Tool.Line or Tool.Edit or Tool.Depot or Tool.Track)) return;
+        DrawSetTransform(V(p.X, p.Y), 0, new Vector2(px, px));
+        var ghost = new Color(1, 1, 1, 0.7f);
+        if (UI.Tool == Tool.Depot)
+        {
+            DrawRect(new Rect2(-9, -9, 18, 18), ghost);
+            DrawRect(new Rect2(-9, -9, 18, 18), new Color("333333"), false, 2);
+        }
+        else
+        {
+            float r = UI.Tool == Tool.Track ? 5 : Mathf.Clamp(Zoom * 6, 4, 8);
+            DrawCircle(Vector2.Zero, r, ghost);
+            DrawArc(Vector2.Zero, r, 0, Mathf.Tau, 24, new Color("333333"), 2);
+        }
         DrawSetTransform(Vector2.Zero);
     }
 
@@ -68,7 +121,7 @@ public partial class NetworkLayer : Node2D
     {
         foreach (var line in Game.Lines.Values)
         {
-            bool sel = Selected is ("line", var id) && id == line.Id;
+            bool sel = IsSel("line", line.Id);
             bool active = double.IsFinite(Game.Headway(line));
             var color = new Color(line.Color) { A = active ? 1 : 0.55f };
             foreach (var run in line.Runs)
@@ -89,7 +142,7 @@ public partial class NetworkLayer : Node2D
             if (v.State == VehicleState.Depot) continue;
             var def = Modes.Get(v.Mode).Vehicle;
             float len = Mathf.Max((float)def.Length, 15 * px), wid = Mathf.Max((float)def.Width, 7 * px);
-            bool sel = Selected is ("vehicle", var id) && id == v.Id;
+            bool sel = IsSel("vehicle", v.Id);
             var line = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? l : null;
             bool lineColor = line != null && (v.State != VehicleState.Deadhead || v.DeadheadTo == DeadheadTarget.Rejoin);
             DrawSetTransform(new Vector2((float)v.X, (float)v.Y), (float)v.Ang);
@@ -112,7 +165,7 @@ public partial class NetworkLayer : Node2D
     {
         foreach (var d in Game.Depots.Values)
         {
-            bool sel = Selected is ("depot", var id) && id == d.Id;
+            bool sel = IsSel("depot", d.Id);
             var pos = new Vector2((float)d.Pos.X, (float)d.Pos.Y);
             DrawSetTransform(pos, 0, new Vector2(px, px)); // draw in screen pixels
             var r = new Rect2(-9, -9, 18, 18);
@@ -132,10 +185,12 @@ public partial class NetworkLayer : Node2D
 
         foreach (var s in Game.Stops.Values)
         {
-            bool sel = Selected is ("stop", var id) && id == s.Id;
+            bool sel = IsSel("stop", s.Id);
             DrawSetTransform(new Vector2((float)s.Pos.X, (float)s.Pos.Y), 0, new Vector2(px, px));
-            float r = stopR + (sel ? 2 : 0);
-            var ring = lineColor.TryGetValue(s.Id, out var c) ? c : new Color("555555");
+            bool hover = UI.HoverStop?.Id == s.Id;
+            float r = stopR + (sel || hover ? 2 : 0);
+            var ring = UI.DraftStops.Any(d => d.Id == s.Id) ? Palette.Ink
+                : lineColor.TryGetValue(s.Id, out var c) ? c : new Color("555555");
             if (s.Mode == ModeId.Tram)
             {
                 var rect = new Rect2(-r, -r, 2 * r, 2 * r);
@@ -156,7 +211,7 @@ public partial class NetworkLayer : Node2D
                 DrawRect(new Rect2(r + 3, -8, w, 16), badge);
                 DrawString(_font, new Vector2(r + 7, 4), label, HorizontalAlignment.Left, -1, 11, Colors.White);
             }
-            if (Zoom > 1.1f || sel)
+            if (Zoom > 1.1f || sel || hover)
             {
                 var size = _font.GetStringSize(s.Name, HorizontalAlignment.Left, -1, 11);
                 var at = new Vector2(-size.X / 2, r + 14);

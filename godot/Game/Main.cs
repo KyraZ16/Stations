@@ -45,10 +45,21 @@ public partial class Main : Node
             DemoNetwork.Build(game);
             game.Advance(3 * 3600); // 05:00 → 08:00, morning peak
         }
+        if (_dev.ContainsKey("tooltest")) ToolTest(game, _view!.Interaction);
         if (_dev.TryGetValue("zoom", out var z) && float.TryParse(z, System.Globalization.CultureInfo.InvariantCulture, out float zf))
             _view!.ZoomBy(zf);
+        if (_dev.ContainsKey("debugui"))
+        {
+            for (int i = 0; i < 10; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            void Dump(Node n, string indent)
+            {
+                if (n is Control c && c.GetCombinedMinimumSize().X > 360)
+                    GD.Print($"{indent}{c.GetType().Name} '{c.Name}' min={c.GetCombinedMinimumSize()} size={c.Size}");
+                foreach (var ch in n.GetChildren()) Dump(ch, indent + "  ");
+            }
+            Dump(GetTree().Root.FindChild("SidePanel", true, false)!, "");
+        }
         if (_dev.TryGetValue("shot", out var shot)) TakeShot(shot);
-        await Task.CompletedTask;
     }
 
     private void ShowStart()
@@ -60,6 +71,58 @@ public partial class Main : Node
         var layer = new CanvasLayer();
         layer.AddChild(_start);
         AddChild(layer);
+    }
+
+    /// <summary>
+    /// Developer check of the build tools: drives the same Interaction methods a mouse click calls.
+    /// --tooltest[=panel] where panel is line, timetable, depot, vehicle, stop, track or draft.
+    /// </summary>
+    private void ToolTest(Game game, Interaction ui)
+    {
+        void Click(double x, double y) => ui.Click(new Vector2((float)x, (float)y), MouseButton.Left);
+        ui.SetTool(Tool.Depot);
+        Click(-200, -900);
+        ui.SetTool(Tool.Line);
+        foreach (var (x, y) in new[] { (-1600.0, -600.0), (-1100, -600), (-600, -600), (-100, -600), (400, -600) }) Click(x, y);
+        ui.Enter();
+        ui.SetTier(Core.Tier.Local);
+        ui.SwitchMode(Core.ModeId.Tram);
+        ui.SetTool(Tool.Track);
+        foreach (var (x, y) in new[] { (-900.0, -300.0), (-300, -350), (300, -300) }) Click(x, y);
+        ui.SetTool(Tool.Depot);
+        Click(-880, -300);
+        ui.SetTool(Tool.Line);
+        foreach (var (x, y) in new[] { (-800.0, -310.0), (-450, -340), (-100, -330), (300, -300) }) Click(x, y);
+        ui.Enter();
+        game.Advance(3 * 3600);
+
+        var bus = game.Lines.Values.First(l => l.Mode == Core.ModeId.Bus);
+        string panel = _dev["tooltest"];
+        switch (panel)
+        {
+            case "timetable":
+                ui.Select(new Selection("line", bus.Id));
+                GetTree().Root.FindChild("SidePanel", true, false)?.Call("ShowTab", "timetable");
+                break;
+            case "depot": ui.Select(new Selection("depot", game.Depots.Values.First().Id)); break;
+            case "vehicle": ui.Select(new Selection("vehicle", game.Vehicles.Values.First(v => v.State != VehicleState.Depot).Id)); break;
+            case "stop": ui.Select(new Selection("stop", bus.StopIds[1])); break;
+            case "track":
+                ui.SetTool(Tool.Track);
+                Click(300, -300);
+                ui.Hover(new Vector2(700, 100));
+                break;
+            case "draft":
+                ui.SwitchMode(Core.ModeId.Bus);
+                ui.SetTool(Tool.Line);
+                Click(300, -1500);
+                Click(300, -1000);
+                ui.Hover(new Vector2(300, -500));
+                break;
+            default: ui.Select(new Selection("line", bus.Id)); break;
+        }
+        GD.Print($"tooltest: {game.Lines.Count} Linien, {game.Stops.Count} Haltestellen, {game.Depots.Count} Betriebshöfe, " +
+                 $"{game.Vehicles.Count} Fahrzeuge, {game.Drivers.Count} Fahrer, Gleise {game.TrackLength:F0} m, Fahrgäste {game.Today.Trips}");
     }
 
     private async Task LoadGame(StartScreen.Choice choice, SaveData? save)

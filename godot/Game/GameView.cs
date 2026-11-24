@@ -8,7 +8,7 @@ using Stations.View;
 namespace Stations;
 
 /// <summary>
-/// A running game: map view, top bar, notifications and keyboard shortcuts.
+/// A running game: map view, tool bar, side panel, top bar, notifications and shortcuts.
 /// Advances the simulation every frame.
 /// </summary>
 public partial class GameView : Node
@@ -17,15 +17,28 @@ public partial class GameView : Node
     public event Action? MenuRequested;
 
     private MapView _map = null!;
+    private Interaction _ui = null!;
     private Label _hint = null!;
     private VBoxContainer _toasts = null!;
+    private ConfirmationDialog _confirm = null!;
+    private Action? _onConfirm;
     private double _autosave;
+
+    /// <summary>Tool state (for developer automation).</summary>
+    public Interaction Interaction => _ui;
 
     public override void _Ready()
     {
-        _map = new MapView { Game = Game };
+        _ui = new Interaction { Game = Game };
+        _map = new MapView { Game = Game, UI = _ui };
+        _ui.Map = _map;
         AddChild(_map);
-        _map.Clicked += OnMapClicked;
+        AddChild(_ui);
+        _map.Clicked += _ui.Click;
+        _map.Hovered += _ui.Hover;
+        _ui.Notify += Toast;
+        _ui.ConfirmRequested += Confirm;
+        _ui.StateChanged += OnStateChanged;
 
         var layer = new CanvasLayer();
         AddChild(layer);
@@ -37,6 +50,8 @@ public partial class GameView : Node
         top.SaveRequested += () => Save(manual: true);
         top.MenuRequested += () => MenuRequested?.Invoke();
         ui.AddChild(top);
+        ui.AddChild(new ToolBar { UI = _ui });
+        ui.AddChild(new SidePanel { UI = _ui });
 
         _hint = Ui.Label("", 13, Colors.White);
         var hintBox = new PanelContainer();
@@ -53,9 +68,6 @@ public partial class GameView : Node
         hintBox.OffsetBottom = -14;
         hintBox.GrowVertical = Control.GrowDirection.Begin;
         ui.AddChild(hintBox);
-        SetHint(Game.Lines.Count == 0
-            ? "Mausrad: Zoomen · Ziehen: Verschieben · F9: Demo-Netz bauen (Werkzeuge folgen) · Leertaste: Pause"
-            : "Mausrad: Zoomen · Ziehen: Verschieben · Klick: Auswählen · Leertaste: Pause · F5: Speichern");
 
         _toasts = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.End };
         _toasts.MouseFilter = Control.MouseFilterEnum.Ignore;
@@ -73,23 +85,27 @@ public partial class GameView : Node
         attribution.OffsetBottom = -4;
         ui.AddChild(attribution);
 
+        _confirm = new ConfirmationDialog { Title = "Bestätigen", OkButtonText = "Ja", CancelButtonText = "Abbrechen" };
+        _confirm.Confirmed += () => { _onConfirm?.Invoke(); _onConfirm = null; };
+        ui.AddChild(_confirm);
+
         Game.Toast += Toast;
-        Game.Changed += OnGameChanged;
+        OnStateChanged();
     }
 
-    private bool _hasNetworkHint;
+    public override void _ExitTree() => Game.Toast -= Toast;
 
-    private void OnGameChanged()
+    private void OnStateChanged()
     {
-        if (_hasNetworkHint || Game.Lines.Count == 0) return;
-        _hasNetworkHint = true;
-        SetHint("Mausrad: Zoomen · Ziehen: Verschieben · Klick: Auswählen · Leertaste: Pause · F5: Speichern");
+        _hint.Text = Interaction.Hint(_ui.Tool);
+        _map.CoverageVisible = _ui.Coverage;
     }
 
-    public override void _ExitTree()
+    private void Confirm(string question, Action yes)
     {
-        Game.Toast -= Toast;
-        Game.Changed -= OnGameChanged;
+        _onConfirm = yes;
+        _confirm.DialogText = question;
+        _confirm.PopupCentered(new Vector2I(420, 0));
     }
 
     /// <summary>Zoom the map by a factor around its center (developer option).</summary>
@@ -119,51 +135,10 @@ public partial class GameView : Node
             case Key.F9:
                 DemoNetwork.Build(Game);
                 Toast($"Demo-Netz gebaut: {Game.Lines.Count} Linien, {Game.Vehicles.Count} Fahrzeuge", false);
-                SetHint("Mausrad: Zoomen · Ziehen: Verschieben · Klick: Auswählen · Leertaste: Pause · F5: Speichern");
                 break;
-            case Key.Escape: _map.Network.Selected = null; SetHint(""); break;
             default: return;
         }
         GetViewport().SetInputAsHandled();
-    }
-
-    private void SetHint(string text)
-    {
-        _hint.Text = text;
-        _hint.GetParent<Control>().Visible = text != "";
-    }
-
-    /// <summary>Simple selection until the panels exist: highlight and describe what was clicked.</summary>
-    private void OnMapClicked(Vector2 world, MouseButton button)
-    {
-        if (button != MouseButton.Left) return;
-        double r = 12 / _map.Zoom;
-        var v = Game.Vehicles.Values.Where(x => x.State != VehicleState.Depot)
-            .OrderBy(x => Util.Hypot(x.X - world.X, x.Y - world.Y)).FirstOrDefault();
-        if (v != null && Util.Hypot(v.X - world.X, v.Y - world.Y) < r)
-        {
-            _map.Network.Selected = ("vehicle", v.Id);
-            var line = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? $"Linie {l.Name}" : "ohne Linie";
-            SetHint($"{v.Name} · {line} · {v.Passengers.Count}/{Modes.Get(v.Mode).Vehicle.Capacity} Fahrgäste · {Math.Round(v.V * 3.6)} km/h");
-            return;
-        }
-        var stop = Game.StopAt(world.X, world.Y, r);
-        if (stop != null)
-        {
-            _map.Network.Selected = ("stop", stop.Id);
-            var lines = string.Join(", ", Game.LinesAtStop(stop.Id).Select(x => x.Name));
-            SetHint($"{stop.Name} · Linien {(lines == "" ? "–" : lines)} · {stop.Waiting.Count} wartend · {stop.BoardedToday} Einstiege heute");
-            return;
-        }
-        var depot = Game.Depots.Values.FirstOrDefault(d => Util.Hypot(d.Pos.X - world.X, d.Pos.Y - world.Y) < r);
-        if (depot != null)
-        {
-            _map.Network.Selected = ("depot", depot.Id);
-            SetHint($"{depot.Name} · {Game.Vehicles.Values.Count(x => x.DepotId == depot.Id)} Fahrzeuge · {Game.DriversOf(depot.Id).Count} Fahrer");
-            return;
-        }
-        _map.Network.Selected = null;
-        SetHint("");
     }
 
     public void Toast(string msg, bool error)

@@ -10,10 +10,15 @@ namespace Stations.View;
 public partial class MapView : Node2D
 {
     public Game Game = null!;
+    public Interaction UI = null!;
 
     private Camera2D _cam = null!;
     private RoadLayer _roads = null!;
     private NetworkLayer _network = null!;
+    private CoverageLayer _coverage = null!;
+
+    /// <summary>Show or hide the catchment overlay.</summary>
+    public bool CoverageVisible { set => _coverage.Visible = value; }
     private float _minZoom = 0.05f;
     private const float MaxZoom = 8f;
     private bool _dragging;
@@ -31,10 +36,12 @@ public partial class MapView : Node2D
     public override void _Ready()
     {
         AddChild(new StaticMapLayer { Map = Game.Map });
+        _coverage = new CoverageLayer { Game = Game, Visible = false };
+        AddChild(_coverage);
         _roads = new RoadLayer { Map = Game.Map };
         AddChild(_roads);
         AddChild(new OutsideMask { Half = (float)Game.Map.Half });
-        _network = new NetworkLayer { Game = Game };
+        _network = new NetworkLayer { Game = Game, UI = UI };
         AddChild(_network);
         _cam = new Camera2D { PositionSmoothingEnabled = false };
         AddChild(_cam);

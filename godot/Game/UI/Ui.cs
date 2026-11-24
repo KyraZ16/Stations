@@ -78,6 +78,100 @@ public static class Ui
         return t;
     }
 
+    public static Button Btn(string text, Action onPressed, bool primary = false, bool danger = false, bool disabled = false)
+    {
+        var b = new Button { Text = text, Disabled = disabled };
+        if (primary)
+        {
+            b.AddThemeStyleboxOverride("normal", ButtonStyle(Accent));
+            b.AddThemeStyleboxOverride("hover", ButtonStyle(Accent.Lightened(0.1f)));
+            b.AddThemeStyleboxOverride("pressed", ButtonStyle(Accent.Darkened(0.1f)));
+            foreach (var c in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color" })
+                b.AddThemeColorOverride(c, Colors.White);
+        }
+        if (danger)
+            foreach (var c in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color" })
+                b.AddThemeColorOverride(c, Danger);
+        b.Pressed += onPressed;
+        return b;
+    }
+
+    /// <summary>Small uppercase section heading.</summary>
+    public static Label Section(string text)
+    {
+        var l = Label(text.ToUpperInvariant(), 11, Muted, bold: true);
+        l.AddThemeConstantOverride("line_spacing", 0);
+        return l;
+    }
+
+    /// <summary>Colored line number badge.</summary>
+    public static PanelContainer Badge(string text, Color color)
+    {
+        var p = new PanelContainer { SizeFlagsVertical = Control.SizeFlags.ShrinkCenter };
+        p.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = color, CornerRadiusTopLeft = 5, CornerRadiusTopRight = 5, CornerRadiusBottomLeft = 5, CornerRadiusBottomRight = 5,
+            ContentMarginLeft = 7, ContentMarginRight = 7, ContentMarginTop = 1, ContentMarginBottom = 1,
+        });
+        var l = Label(text, 13, Colors.White, bold: true);
+        l.HorizontalAlignment = HorizontalAlignment.Center;
+        l.CustomMinimumSize = new Vector2(16, 0);
+        p.AddChild(l);
+        return p;
+    }
+
+    /// <summary>
+    /// Clickable list row: optional badge, text on the left, muted meta text on the right.
+    /// Returns the meta label so callers can keep it updated.
+    /// </summary>
+    public static Label Row(Container parent, string text, string meta = "", Action? onClick = null, Control? badge = null)
+    {
+        var btn = new Button { Flat = true, CustomMinimumSize = new Vector2(0, 30), MouseDefaultCursorShape = Control.CursorShape.PointingHand };
+        if (onClick != null) btn.Pressed += onClick;
+        else btn.MouseFilter = Control.MouseFilterEnum.Ignore;
+        var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        row.AddThemeConstantOverride("separation", 8);
+        row.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        row.OffsetLeft = 6;
+        row.OffsetRight = -6;
+        if (badge != null) { badge.MouseFilter = Control.MouseFilterEnum.Ignore; row.AddChild(badge); }
+        var main = Label(text, 13);
+        main.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        main.ClipText = true;
+        main.VerticalAlignment = VerticalAlignment.Center;
+        row.AddChild(main);
+        var m = Label(meta, 12, Muted);
+        m.VerticalAlignment = VerticalAlignment.Center;
+        row.AddChild(m);
+        btn.AddChild(row);
+        parent.AddChild(btn);
+        return m;
+    }
+
+    /// <summary>Two-column key/value grid; Add returns the value label.</summary>
+    public sealed class KeyValues
+    {
+        private readonly GridContainer _grid = new() { Columns = 2 };
+
+        public KeyValues(Container parent)
+        {
+            _grid.AddThemeConstantOverride("h_separation", 12);
+            _grid.AddThemeConstantOverride("v_separation", 2);
+            parent.AddChild(_grid);
+        }
+
+        public Label Add(string key, string value = "")
+        {
+            var k = Label(key, 13, Muted);
+            k.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+            _grid.AddChild(k);
+            var v = Label(value, 13, bold: true);
+            v.HorizontalAlignment = HorizontalAlignment.Right;
+            _grid.AddChild(v);
+            return v;
+        }
+    }
+
     public static StyleBoxFlat ButtonStyle(Color bg) => new()
     {
         BgColor = bg,
