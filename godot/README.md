@@ -40,4 +40,5 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] Wartung und Verschleiß: Zustand sinkt mit den Kilometern (Pannen unter 50 %), Sauberkeit mit der Einsatzzeit (weniger Fahrgäste), Werkstatt repariert, Waschanlage wäscht, Ladestationen laden E-Busse; Disposition schickt nur einsatzbereite Fahrzeuge; Fahrzeugmodelle Solobus, Gelenkbus (langer Stellplatz), E-Bus
 - [x] Leben im Betriebshof: Fahrzeuge fahren durch die Einfahrt über die Fahrwege zu ihrem Heim-Stellplatz, in die Werkstatt (2 Spuren), durch die Waschanlage und wieder hinaus; Abstand halten, Vorfahrt bei Gegenverkehr, Stau bei engen Layouts; Ladestationen laden den Bus auf dem Stellplatz daneben
 - [x] Ladescreen mit Schritten, Fortschritt, Abbrechen und Erneut versuchen
-- [ ] Echte 3D-Modelle, U-Bahn, Kampagne
+- [x] Bessere 3D-Optik im Betriebshof: prozedurale Busse (Räder, Türen, Fensterband, Lichter, Zielanzeige; Gelenkbus mit Faltenbalg, E-Bus mit Akkus) und Trams, Sozialgebäude mit Fensterbändern, Stahlhallen, Ladesäulen; Tag/Nacht nach Spielzeit mit Laternen, leuchtenden Fenstern und Scheinwerfern; Straße, Gehwege, Bäume, strukturierte Oberflächen
+- [ ] U-Bahn, Kampagne

@@ -44,7 +44,6 @@ public partial class DepotEditor : Node3D
     private VBoxContainer _palette = null!;
     private double _vehicleTimer;
 
-    private readonly Dictionary<string, StandardMaterial3D> _mats = new();
 
     public override void _Ready()
     {
@@ -66,6 +65,7 @@ public partial class DepotEditor : Node3D
         UpdateCamera();
 
         BuildUi();
+        UpdateDayNight();
         if (Depot.Mode == ModeId.Tram) _tool = ModuleType.Road;
         RebuildModules();
         RebuildVehicles();
@@ -82,84 +82,161 @@ public partial class DepotEditor : Node3D
 
     // ---------------------------------------------------------------- scene
 
-    private StandardMaterial3D Mat(string hex, float roughness = 0.9f)
-    {
-        if (_mats.TryGetValue(hex, out var m)) return m;
-        m = new StandardMaterial3D { AlbedoColor = new Color(hex), Roughness = roughness };
-        _mats[hex] = m;
-        return m;
-    }
+    private readonly Props _props = new();
+    private DirectionalLight3D _sun = null!;
+    private Godot.Environment _env = null!;
+    private ProceduralSkyMaterial _sky = null!;
+    private readonly List<OmniLight3D> _lamps = new();
+    private readonly List<(Node3D Pivot, int ModX, int ModY)> _brushes = new();
+
+    private StandardMaterial3D Mat(string hex, float roughness = 0.9f) => _props.Solid(hex, roughness);
 
     private void BuildEnvironment()
     {
-        var sky = new Sky { SkyMaterial = new ProceduralSkyMaterial
+        _sky = new ProceduralSkyMaterial
         {
             SkyTopColor = new Color("6f9fd6"), SkyHorizonColor = new Color("d8e4ee"),
             GroundBottomColor = new Color("8a8f7a"), GroundHorizonColor = new Color("d8e4ee"),
-        } };
-        var env = new Godot.Environment
+        };
+        _env = new Godot.Environment
         {
-            BackgroundMode = Godot.Environment.BGMode.Sky, Sky = sky,
+            BackgroundMode = Godot.Environment.BGMode.Sky, Sky = new Sky { SkyMaterial = _sky },
             AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color("b9c6d6"), AmbientLightEnergy = 0.45f,
             TonemapMode = Godot.Environment.ToneMapper.Filmic, TonemapExposure = 0.85f,
             SsaoEnabled = true, SsaoRadius = 2, SsaoIntensity = 1.5f,
+            GlowEnabled = true, GlowIntensity = 0.6f, GlowBloom = 0.05f,
+            FogEnabled = true, FogDensity = 0.0007f, FogLightColor = new Color("c9d3dc"),
         };
-        AddChild(new WorldEnvironment { Environment = env });
-        var sun = new DirectionalLight3D { ShadowEnabled = true, LightEnergy = 1.0f, LightColor = new Color("fff4e0"), DirectionalShadowMaxDistance = 400 };
-        sun.RotationDegrees = new Vector3(-55, 35, 0);
-        AddChild(sun);
+        AddChild(new WorldEnvironment { Environment = _env });
+        _sun = new DirectionalLight3D { ShadowEnabled = true, LightEnergy = 1.0f, LightColor = new Color("fff4e0"), DirectionalShadowMaxDistance = 300 };
+        AddChild(_sun);
+    }
+
+    /// <summary>Sun, sky and lights follow the game clock: dawn, day, dusk and night.</summary>
+    private void UpdateDayNight()
+    {
+        double h = Game.Time % 86400 / 3600;
+        // Sun up from 06:00 to 20:00 (highest at 13:00), below the horizon in between
+        float elev = h >= 6 && h < 20 ? Mathf.Sin(Mathf.Pi * (float)(h - 6) / 14) : -Mathf.Sin(Mathf.Pi * (float)((h + 24 - 20) % 24) / 10);
+        float day = Mathf.SmoothStep(-0.12f, 0.25f, elev);
+        float night = 1 - day;
+        float warm = 1 - Mathf.SmoothStep(0.0f, 0.45f, Mathf.Abs(elev)); // dawn/dusk glow
+
+        _sun.RotationDegrees = new Vector3(-Mathf.Max(elev, 0.08f) * 68, (float)(h - 13) * 13 + 35, 0);
+        _sun.LightEnergy = 0.05f + 1.05f * day;
+        _sun.LightColor = new Color("fff4e0").Lerp(new Color("ff9a52"), warm * day);
+        _sun.ShadowEnabled = day > 0.15f;
+
+        var dayHorizon = new Color("d8e4ee").Lerp(new Color("f6b27a"), warm);
+        _sky.SkyTopColor = new Color("0b1426").Lerp(new Color("6f9fd6"), day);
+        _sky.SkyHorizonColor = new Color("1b2740").Lerp(dayHorizon, day);
+        _sky.GroundHorizonColor = _sky.SkyHorizonColor;
+        _env.AmbientLightColor = new Color("41557a").Lerp(new Color("b9c6d6"), day);
+        _env.AmbientLightEnergy = 0.25f + 0.2f * day;
+        _env.FogLightColor = _sky.SkyHorizonColor;
+        _props.SetNight(night);
+        foreach (var l in _lamps) l.LightEnergy = 2.2f * Mathf.SmoothStep(0.3f, 0.8f, night);
+        if (_grid.MaterialOverride is StandardMaterial3D gm) gm.AlbedoColor = new Color(1, 1, 1, 0.05f + 0.15f * day); // subtle at night
     }
 
     private Vector3 CellCenter(double x, double y) =>
         new((float)((x + 0.5) * Cell - L.Width * Cell / 2), 0, (float)((y + 0.5) * Cell - L.Height * Cell / 2));
 
-    private void AddBox(Node parent, Vector3 center, Vector3 size, Material mat, bool shadow = true)
-    {
-        parent.AddChild(new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = size }, Position = center, MaterialOverride = mat,
-            CastShadow = shadow ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
-        });
-    }
+    private static void AddBox(Node parent, Vector3 center, Vector3 size, Material mat, bool shadow = true) =>
+        Props.Box(parent, center, size, mat, shadow);
+
+    private StandardMaterial3D Asphalt => _props.Textured("asphalt", "565b62", "40444a", 0.35f);
+    private StandardMaterial3D Concrete => _props.Textured("concrete", "aca79d", "938e85", 0.25f);
+    private StandardMaterial3D Grass => _props.Textured("grass", "7d9a5f", "5f7c45", 0.12f);
+    private StandardMaterial3D Pavement => _props.Textured("pavement", "bdb8ae", "a39e94", 0.6f);
 
     private void BuildGround()
     {
         float w = L.Width * Cell, h = L.Height * Cell;
-        AddBox(this, new Vector3(0, -0.06f, 0), new Vector3(600, 0.1f, 600), Mat("7d9461"), shadow: false); // grass
-        AddBox(this, new Vector3(0, -0.02f, 0), new Vector3(w, 0.04f, h), Mat("a39e94"), shadow: false); // yard concrete
+        AddBox(this, new Vector3(0, -0.06f, 0), new Vector3(700, 0.1f, 700), Grass, shadow: false);
+        AddBox(this, new Vector3(0, -0.02f, 0), new Vector3(w, 0.04f, h), Concrete, shadow: false);
 
-        // Street in front of the gate
-        AddBox(this, new Vector3(0, -0.03f, h / 2 + 6), new Vector3(w + 80, 0.05f, 9), Mat("4f545b"), shadow: false);
+        // Street in front of the gate: asphalt, sidewalks, dashed centre line
+        float sz = h / 2 + 7.5f;
+        AddBox(this, new Vector3(0, -0.03f, sz), new Vector3(w + 220, 0.05f, 10), Asphalt, shadow: false);
+        AddBox(this, new Vector3(0, 0.02f, h / 2 + 1.25f), new Vector3(w + 220, 0.16f, 2.5f), Pavement, shadow: false);
+        AddBox(this, new Vector3(0, 0.02f, sz + 6.25f), new Vector3(w + 220, 0.16f, 2.5f), Pavement, shadow: false);
+        var paint = Mat("f2f0e8", 0.6f);
+        for (float x = -w / 2 - 110; x < w / 2 + 110; x += 6)
+            AddBox(this, new Vector3(x, 0.0f, sz), new Vector3(3, 0.02f, 0.18f), paint, shadow: false);
+        AddBox(this, new Vector3(0, 0.03f, h / 2 + 1.25f), new Vector3(2 * Cell, 0.17f, 2.5f), Asphalt, shadow: false); // gate driveway
 
-        // Fence with a gap for the gate
-        var fence = Mat("6d6a63");
+        // Fence posts and mesh with a gap for the gate
+        var fence = new StandardMaterial3D
+        {
+            AlbedoColor = new Color("5d6066") { A = 0.55f }, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Metallic = 0.5f, Roughness = 0.5f,
+        };
         float gx0 = (L.Width / 2 - 1) * Cell - w / 2, gx1 = (L.Width / 2 + 1) * Cell - w / 2;
-        AddBox(this, new Vector3(0, 1, -h / 2), new Vector3(w, 2, 0.15f), fence);
-        AddBox(this, new Vector3(-w / 2, 1, 0), new Vector3(0.15f, 2, h), fence);
-        AddBox(this, new Vector3(w / 2, 1, 0), new Vector3(0.15f, 2, h), fence);
-        AddBox(this, new Vector3((-w / 2 + gx0) / 2, 1, h / 2), new Vector3(gx0 + w / 2, 2, 0.15f), fence);
-        AddBox(this, new Vector3((gx1 + w / 2) / 2, 1, h / 2), new Vector3(w / 2 - gx1, 2, 0.15f), fence);
-        // Gate posts and barrier
-        var gate = Mat("d9a21b");
-        AddBox(this, new Vector3(gx0, 1.4f, h / 2), new Vector3(0.4f, 2.8f, 0.4f), Mat("3a3d42"));
-        AddBox(this, new Vector3(gx1, 1.4f, h / 2), new Vector3(0.4f, 2.8f, 0.4f), Mat("3a3d42"));
-        AddBox(this, new Vector3(gx0 + 2.5f, 1.1f, h / 2 + 0.3f), new Vector3(5, 0.15f, 0.15f), gate);
-        // Gate cells are drivable
+        void FenceRun(Vector3 a, Vector3 b)
+        {
+            var mid = (a + b) / 2;
+            float len = a.DistanceTo(b);
+            bool alongX = Mathf.Abs(a.X - b.X) > Mathf.Abs(a.Z - b.Z);
+            AddBox(this, mid + new Vector3(0, 1, 0), alongX ? new Vector3(len, 2, 0.05f) : new Vector3(0.05f, 2, len), fence, shadow: false);
+            int posts = Mathf.Max(1, (int)(len / 3));
+            for (int i = 0; i <= posts; i++)
+                AddBox(this, a.Lerp(b, (float)i / posts) + new Vector3(0, 1.05f, 0), new Vector3(0.12f, 2.1f, 0.12f), _props.DarkSteel);
+        }
+        FenceRun(new Vector3(-w / 2, 0, -h / 2), new Vector3(w / 2, 0, -h / 2));
+        FenceRun(new Vector3(-w / 2, 0, -h / 2), new Vector3(-w / 2, 0, h / 2));
+        FenceRun(new Vector3(w / 2, 0, -h / 2), new Vector3(w / 2, 0, h / 2));
+        FenceRun(new Vector3(-w / 2, 0, h / 2), new Vector3(gx0, 0, h / 2));
+        FenceRun(new Vector3(gx1, 0, h / 2), new Vector3(w / 2, 0, h / 2));
+        // Gate posts and a red/white barrier
+        AddBox(this, new Vector3(gx0, 1.4f, h / 2), new Vector3(0.4f, 2.8f, 0.4f), _props.DarkSteel);
+        AddBox(this, new Vector3(gx1, 1.4f, h / 2), new Vector3(0.4f, 2.8f, 0.4f), _props.DarkSteel);
+        for (int i = 0; i < 5; i++)
+            AddBox(this, new Vector3(gx0 + 0.5f + i, 1.1f, h / 2 + 0.3f), new Vector3(1, 0.15f, 0.15f), Mat(i % 2 == 0 ? "c62828" : "f2f2ee", 0.5f));
         foreach (var (gxc, gyc) in L.GateCells())
-            AddBox(this, CellCenter(gxc, gyc) + new Vector3(0, 0.03f, 0), new Vector3(Cell, 0.06f, Cell), Mat("4a4f56"), shadow: false);
+            AddBox(this, CellCenter(gxc, gyc) + new Vector3(0, 0.03f, 0), new Vector3(Cell, 0.06f, Cell), Asphalt, shadow: false);
+
+        // Trees around the yard and along the street (same layout every time)
+        var rng = new Random(Depot.Id * 7919);
+        for (int i = 0; i < 46; i++)
+        {
+            float x, z;
+            switch (i % 4)
+            {
+                case 0: x = (float)rng.NextDouble() * (w + 60) - w / 2 - 30; z = -h / 2 - 6 - (float)rng.NextDouble() * 25; break;
+                case 1: x = -w / 2 - 6 - (float)rng.NextDouble() * 25; z = (float)rng.NextDouble() * h - h / 2; break;
+                case 2: x = w / 2 + 6 + (float)rng.NextDouble() * 25; z = (float)rng.NextDouble() * h - h / 2; break;
+                default: x = (float)rng.NextDouble() * (w + 120) - w / 2 - 60; z = sz + 9 + (float)rng.NextDouble() * 8; break;
+            }
+            var tree = _props.Tree(rng);
+            tree.Position = new Vector3(x, 0, z);
+            AddChild(tree);
+        }
+
+        // Street lamps along the street and at the yard corners
+        void Lamp(Vector3 pos, float yawDeg)
+        {
+            var lamp = _props.Lamp(out var light);
+            lamp.Position = pos;
+            lamp.RotationDegrees = new Vector3(0, yawDeg, 0);
+            AddChild(lamp);
+            _lamps.Add(light);
+        }
+        for (float x = -w / 2 - 20; x <= w / 2 + 20; x += 24) Lamp(new Vector3(x, 0, h / 2 + 2.2f), -90);
+        Lamp(new Vector3(-w / 2 + 1.5f, 0, -h / 2 + 1.5f), -45);
+        Lamp(new Vector3(w / 2 - 1.5f, 0, -h / 2 + 1.5f), -135);
 
         // Grid lines (shown while building)
         var im = new ImmediateMesh();
         im.SurfaceBegin(Mesh.PrimitiveType.Lines);
         for (int x = 0; x <= L.Width; x++)
         {
-            im.SurfaceAddVertex(new Vector3(x * Cell - w / 2, 0.05f, -h / 2));
-            im.SurfaceAddVertex(new Vector3(x * Cell - w / 2, 0.05f, h / 2));
+            im.SurfaceAddVertex(new Vector3(x * Cell - w / 2, 0.07f, -h / 2));
+            im.SurfaceAddVertex(new Vector3(x * Cell - w / 2, 0.07f, h / 2));
         }
         for (int y = 0; y <= L.Height; y++)
         {
-            im.SurfaceAddVertex(new Vector3(-w / 2, 0.05f, y * Cell - h / 2));
-            im.SurfaceAddVertex(new Vector3(w / 2, 0.05f, y * Cell - h / 2));
+            im.SurfaceAddVertex(new Vector3(-w / 2, 0.07f, y * Cell - h / 2));
+            im.SurfaceAddVertex(new Vector3(w / 2, 0.07f, y * Cell - h / 2));
         }
         im.SurfaceEnd();
         _grid = new MeshInstance3D
@@ -167,8 +244,8 @@ public partial class DepotEditor : Node3D
             Mesh = im, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             MaterialOverride = new StandardMaterial3D
             {
-                AlbedoColor = new Color(1, 1, 1, 0.35f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                // lit (not unshaded), so the grid fades with the light at night
+                AlbedoColor = new Color(1, 1, 1, 0.22f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Roughness = 1,
             },
         };
         AddChild(_grid);
@@ -184,94 +261,91 @@ public partial class DepotEditor : Node3D
     private void RebuildModules()
     {
         foreach (var c in _modulesRoot.GetChildren()) c.QueueFree();
+        _brushes.Clear();
         var reach = L.Reachable();
+        var warn = Mat("d8a49c");
         foreach (var m in L.Modules)
         {
             var def = DepotLayout.Def(m.Type);
             bool ok = L.IsConnected(m, reach);
             var node = new Node3D();
             _modulesRoot.AddChild(node);
+            var (ground, fp) = Footprint(m.X, m.Y, m.W, m.H, 0);
+            bool vertical = m.H >= m.W;
             switch (m.Type)
             {
                 case ModuleType.Road:
-                {
-                    var (c, s) = Footprint(m.X, m.Y, 1, 1, 0.06f);
-                    AddBox(node, c, s, Mat(ok ? "4a4f56" : "7a5a58"), shadow: false);
+                    AddBox(node, ground + new Vector3(0, 0.03f, 0), new Vector3(Cell, 0.06f, Cell), ok ? Asphalt : warn, shadow: false);
                     break;
-                }
                 case ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot:
                 {
-                    var (c, s) = Footprint(m.X, m.Y, m.W, m.H, 0.05f);
-                    AddBox(node, c, s, Mat(ok ? def.Color : "d8a49c"), shadow: false);
-                    // white side markings along the long edges (or rails for trams)
-                    bool vertical = m.Rot % 2 == 0;
-                    var lineSize = vertical ? new Vector3(0.15f, 0.06f, s.Z - 0.6f) : new Vector3(s.X - 0.6f, 0.06f, 0.15f);
-                    var off = vertical ? new Vector3(s.X / 2 - 0.2f, 0, 0) : new Vector3(0, 0, s.Z / 2 - 0.2f);
-                    var mark = m.Type == ModuleType.TramSpot ? Mat("3a3d42", 0.4f) : Mat("f4f4f0");
-                    if (m.Type == ModuleType.TramSpot) off *= 0.35f; // rails closer together
-                    AddBox(node, c + off + new Vector3(0, 0.03f, 0), lineSize, mark, shadow: false);
-                    AddBox(node, c - off + new Vector3(0, 0.03f, 0), lineSize, mark, shadow: false);
-                    break;
-                }
-                default:
-                {
-                    var (c, s) = Footprint(m.X, m.Y, m.W, m.H, (float)def.Height);
-                    var body = new Vector3(s.X - 0.6f, s.Y, s.Z - 0.6f);
-                    if (m.Type is ModuleType.Workshop or ModuleType.Wash)
+                    AddBox(node, ground + new Vector3(0, 0.025f, 0), new Vector3(fp.X, 0.05f, fp.Z), ok ? Asphalt : warn, shadow: false);
+                    var lineSize = vertical ? new Vector3(0.14f, 0.06f, fp.Z - 0.4f) : new Vector3(fp.X - 0.4f, 0.06f, 0.14f);
+                    if (m.Type == ModuleType.TramSpot)
                     {
-                        // Open hall: pillars, a low side wall and a see-through roof, so vehicles inside stay visible
-                        var wall = Mat(ok ? def.Color : "d8a49c");
-                        float px = body.X / 2 - 0.25f, pz = body.Z / 2 - 0.25f;
-                        foreach (var (sx, sz) in new[] { (-1, -1), (1, -1), (-1, 1), (1, 1) })
-                            AddBox(node, c + new Vector3(sx * px, 0, sz * pz), new Vector3(0.5f, s.Y, 0.5f), wall);
-                        bool vertical = m.H >= m.W;
-                        var side = vertical ? new Vector3(0.3f, s.Y * 0.35f, body.Z) : new Vector3(body.X, s.Y * 0.35f, 0.3f);
-                        var sideOff = vertical ? new Vector3(-px, -s.Y * 0.325f, 0) : new Vector3(0, -s.Y * 0.325f, -pz);
-                        AddBox(node, c + sideOff, side, wall);
-                        var glass = new StandardMaterial3D
-                        {
-                            AlbedoColor = new Color(def.Color) { A = 0.45f }, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Roughness = 0.3f,
-                        };
-                        AddBox(node, c + new Vector3(0, s.Y / 2, 0), new Vector3(body.X + 0.3f, 0.3f, body.Z + 0.3f), glass, shadow: false);
-                        if (m.Type == ModuleType.Wash)
-                        {
-                            // brushes
-                            var brush = Mat("3f7fd0");
-                            var bOff = vertical ? new Vector3(1.7f, 0, 0) : new Vector3(0, 0, 1.7f);
-                            AddBox(node, c + bOff + new Vector3(0, -s.Y * 0.1f, 0), new Vector3(0.6f, s.Y * 0.7f, 0.6f), brush);
-                            AddBox(node, c - bOff + new Vector3(0, -s.Y * 0.1f, 0), new Vector3(0.6f, s.Y * 0.7f, 0.6f), brush);
-                        }
+                        // two rails on sleepers
+                        var railOff = vertical ? new Vector3(0.72f, 0.12f, 0) : new Vector3(0, 0.12f, 0.72f);
+                        var railSize = lineSize with { Y = 0.12f };
+                        AddBox(node, ground + railOff, railSize, _props.Steel);
+                        AddBox(node, ground - railOff + new Vector3(0, 0.24f, 0), railSize, _props.Steel);
+                        float len = vertical ? fp.Z : fp.X;
+                        for (float t = -len / 2 + 0.6f; t < len / 2; t += 1.2f)
+                            AddBox(node, ground + (vertical ? new Vector3(0, 0.05f, t) : new Vector3(t, 0.05f, 0)),
+                                vertical ? new Vector3(2.3f, 0.08f, 0.25f) : new Vector3(0.25f, 0.08f, 2.3f), Mat("6b5a48"), shadow: false);
                     }
                     else
                     {
-                        AddBox(node, c, body, Mat(ok ? def.Color : "d8a49c"));
-                        AddBox(node, c + new Vector3(0, s.Y / 2 + 0.15f, 0), body + new Vector3(0.3f, -s.Y + 0.3f, 0.3f), Mat("6b6660"));
+                        var white = Mat("f4f4f0", 0.6f);
+                        var off = vertical ? new Vector3(fp.X / 2 - 0.12f, 0.05f, 0) : new Vector3(0, 0.05f, fp.Z / 2 - 0.12f);
+                        AddBox(node, ground + off, lineSize, white, shadow: false);
+                        AddBox(node, ground - off + new Vector3(0, 0.1f, 0), lineSize, white, shadow: false);
+                        // yellow marking at the far end
+                        var markPos = ground + (vertical ? new Vector3(0, 0.06f, -fp.Z / 2 + 1.5f) : new Vector3(-fp.X / 2 + 1.5f, 0.06f, 0));
+                        AddBox(node, markPos, vertical ? new Vector3(1.6f, 0.01f, 0.5f) : new Vector3(0.5f, 0.01f, 1.6f), Mat("e0b21c", 0.6f), shadow: false);
                     }
-                    if (m.Type == ModuleType.Charger)
-                    {
-                        // charging post with a green light
-                        AddBox(node, c + new Vector3(0, s.Y / 2 + 0.2f, 0), new Vector3(0.5f, 0.4f, 0.5f), new StandardMaterial3D
-                        {
-                            AlbedoColor = new Color("5dff9a"), EmissionEnabled = true, Emission = new Color("35d06e"), EmissionEnergyMultiplier = 2,
-                        });
-                        break;
-                    }
-                    node.AddChild(new Label3D
-                    {
-                        Text = def.Name, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 64, PixelSize = 0.02f,
-                        Position = c + new Vector3(0, s.Y / 2 + 2, 0), Modulate = Colors.White, OutlineSize = 12,
-                        OutlineModulate = new Color(0, 0, 0, 0.7f), NoDepthTest = true,
-                    });
+                    break;
+                }
+                case ModuleType.Office:
+                {
+                    var b = _props.Office(new Vector3(fp.X - 0.8f, (float)def.Height, fp.Z - 0.8f), ok ? "d9cbb0" : "d8a49c");
+                    b.Position = ground;
+                    node.AddChild(b);
+                    break;
+                }
+                case ModuleType.Workshop or ModuleType.Wash:
+                {
+                    bool wash = m.Type == ModuleType.Wash;
+                    var hall = _props.Hall(new Vector3(fp.X - 0.6f, (float)def.Height, fp.Z - 0.6f), vertical,
+                        ok ? (wash ? "3f7fd0" : "c9852e") : "d8a49c", wash, out var brushes);
+                    hall.Position = ground;
+                    node.AddChild(hall);
+                    foreach (var br in brushes) _brushes.Add((br, m.X, m.Y));
+                    break;
+                }
+                case ModuleType.Charger:
+                {
+                    var ch = _props.Charger();
+                    ch.Position = ground;
+                    node.AddChild(ch);
+                    if (!ok) AddBox(node, ground + new Vector3(0, 0.02f, 0), new Vector3(Cell, 0.04f, Cell), warn, shadow: false);
                     break;
                 }
             }
+            if (m.Type is ModuleType.Office or ModuleType.Workshop or ModuleType.Wash)
+            {
+                node.AddChild(new Label3D
+                {
+                    Text = def.Name, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 64, PixelSize = 0.02f,
+                    Position = ground + new Vector3(0, (float)def.Height + 2.2f, 0), Modulate = Colors.White, OutlineSize = 12,
+                    OutlineModulate = new Color(0, 0, 0, 0.7f), NoDepthTest = true,
+                });
+            }
             if (!ok && m.Type != ModuleType.Road)
             {
-                var (c, s) = Footprint(m.X, m.Y, m.W, m.H, (float)def.Height);
                 node.AddChild(new Label3D
                 {
                     Text = "⚠ kein Anschluss", Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 48, PixelSize = 0.02f,
-                    Position = c + new Vector3(0, s.Y / 2 + (DepotLayout.IsSpot(m.Type) ? 1.5f : 4), 0),
+                    Position = ground + new Vector3(0, DepotLayout.IsSpot(m.Type) ? 1.5f : (float)def.Height + 4, 0),
                     Modulate = new Color("ffb4a8"), OutlineSize = 10, OutlineModulate = new Color(0, 0, 0, 0.7f), NoDepthTest = true,
                 });
             }
@@ -279,12 +353,20 @@ public partial class DepotEditor : Node3D
         RebuildVehicles();
     }
 
-    private readonly Dictionary<int, (Node3D Node, string Key)> _vehicleNodes = new();
+    private sealed class VehicleView
+    {
+        public required Node3D Node;
+        public required string Key;
+        public required List<Node3D> Wheels;
+        public Vector3 LastPos;
+    }
+
+    private readonly Dictionary<int, VehicleView> _vehicleNodes = new();
 
     /// <summary>Kept for callers after layout changes; vehicles follow the simulation every frame.</summary>
     private void RebuildVehicles() => UpdateVehicles();
 
-    /// <summary>One node per vehicle in the yard, placed at its simulated yard position.</summary>
+    /// <summary>One model per vehicle in the yard at its simulated position; wheels turn with the distance driven.</summary>
     private void UpdateVehicles()
     {
         var present = new HashSet<int>();
@@ -294,15 +376,21 @@ public partial class DepotEditor : Node3D
             present.Add(v.Id);
             string color = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? l.Color : "8d939b";
             string key = $"{color}/{v.ModelId}";
-            if (!_vehicleNodes.TryGetValue(v.Id, out var entry) || entry.Key != key)
+            var pos = new Vector3((float)v.YardX, 0, (float)v.YardY);
+            if (!_vehicleNodes.TryGetValue(v.Id, out var view) || view.Key != key)
             {
-                entry.Node?.QueueFree();
-                entry = (BuildVehicle(v, color), key);
-                _vehiclesRoot.AddChild(entry.Node);
-                _vehicleNodes[v.Id] = entry;
+                view?.Node.QueueFree();
+                var node = _props.Vehicle(v.Def, v.Mode, color, out var wheels);
+                _vehiclesRoot.AddChild(node);
+                view = new VehicleView { Node = node, Key = key, Wheels = wheels, LastPos = pos };
+                _vehicleNodes[v.Id] = view;
             }
-            entry.Node.Position = new Vector3((float)v.YardX, 0, (float)v.YardY);
-            entry.Node.Rotation = new Vector3(0, -(float)v.YardAng, 0);
+            float moved = pos.DistanceTo(view.LastPos);
+            view.LastPos = pos;
+            view.Node.Position = pos;
+            view.Node.Rotation = new Vector3(0, -(float)v.YardAng, 0);
+            if (moved > 0 && moved < 5)
+                foreach (var wheel in view.Wheels) wheel.RotateObjectLocal(Vector3.Back, -moved / 0.5f);
         }
         foreach (int id in _vehicleNodes.Keys.Where(id => !present.Contains(id)).ToList())
         {
@@ -311,19 +399,15 @@ public partial class DepotEditor : Node3D
         }
     }
 
-    /// <summary>Simple bus/tram body: length along local X (driving direction), windows and roof.</summary>
-    private Node3D BuildVehicle(Vehicle v, string color)
+    /// <summary>Wash brushes spin while a vehicle stands in that wash bay.</summary>
+    private void SpinBrushes(double delta)
     {
-        var def = v.Def;
-        float len = (float)def.Length, wid = (float)def.Width, height = 3.1f;
-        var n = new Node3D();
-        AddBox(n, new Vector3(0, height / 2 + 0.35f, 0), new Vector3(len, height, wid), Mat(color, 0.5f));
-        AddBox(n, new Vector3(0, height * 0.72f + 0.35f, 0), new Vector3(len - 1.2f, 0.9f, wid + 0.04f), Mat("2b3440", 0.2f));
-        AddBox(n, new Vector3(len / 2 - 0.05f, height * 0.6f + 0.35f, 0), new Vector3(0.12f, 1.5f, wid - 0.4f), Mat("2b3440", 0.2f)); // windscreen
-        AddBox(n, new Vector3(0, height + 0.4f, 0), new Vector3(len * 0.95f, 0.12f, wid * 0.95f), Mat("e8e8e8"));
-        if (def.Length > 15) AddBox(n, new Vector3(len * 0.12f, height / 2 + 0.35f, 0), new Vector3(0.5f, height + 0.05f, wid + 0.06f), Mat("3a3d42")); // joint
-        if (def.Electric) AddBox(n, new Vector3(-len * 0.2f, height + 0.6f, 0), new Vector3(len * 0.3f, 0.35f, wid * 0.7f), Mat("7fb8e0")); // batteries
-        return n;
+        foreach (var (pivot, mx, my) in _brushes)
+        {
+            bool busy = Game.Vehicles.Values.Any(v => v.DepotId == Depot.Id && v.State == VehicleState.Depot &&
+                v.Bay == YardBay.Wash && v.BayX == mx && v.BayY == my);
+            if (busy) pivot.RotateY((float)delta * 6);
+        }
     }
 
     // ---------------------------------------------------------------- camera and input
@@ -443,6 +527,8 @@ public partial class DepotEditor : Node3D
     public override void _Process(double delta)
     {
         UpdateVehicles();
+        SpinBrushes(delta);
+        UpdateDayNight();
         _vehicleTimer += delta;
         if (_vehicleTimer > 0.5)
         {
