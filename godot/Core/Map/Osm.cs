@@ -166,7 +166,9 @@ public static class Overpass
     public static string CacheKey(Area a) => string.Create(CultureInfo.InvariantCulture, $"{a.Lat:F4}_{a.Lon:F4}_{a.Radius:F0}");
 
     /// <summary>Returns the raw Overpass JSON for an area, from <paramref name="cacheDir"/> if present.</summary>
-    public static async Task<string> LoadAsync(Area area, string cacheDir, Action<string> status, CancellationToken ct = default)
+    /// <param name="received">Called with the number of bytes downloaded so far (any thread).</param>
+    public static async Task<string> LoadAsync(Area area, string cacheDir, Action<string> status, CancellationToken ct = default,
+        Action<long>? received = null)
     {
         Directory.CreateDirectory(cacheDir);
         string file = Path.Combine(cacheDir, CacheKey(area) + ".json");
@@ -187,10 +189,21 @@ public static class Overpass
                 {
                     status($"Lade OpenStreetMap-Daten von {host} … (Versuch {round + 1})");
                     using var content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("data", query) });
-                    using var res = await Http.PostAsync(url, content, ct);
+                    using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+                    // Stream the body so the loading screen can show the received megabytes
+                    using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
                     if (!res.IsSuccessStatusCode) throw new HttpRequestException($"HTTP {(int)res.StatusCode}");
                     status("Empfange Kartendaten …");
-                    string json = await res.Content.ReadAsStringAsync(ct);
+                    await using var stream = await res.Content.ReadAsStreamAsync(ct);
+                    using var buffer = new MemoryStream();
+                    var chunk = new byte[1 << 16];
+                    int n;
+                    while ((n = await stream.ReadAsync(chunk, ct)) > 0)
+                    {
+                        buffer.Write(chunk, 0, n);
+                        received?.Invoke(buffer.Length);
+                    }
+                    string json = System.Text.Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
                     if (!json.Contains("\"elements\"")) throw new InvalidDataException("Keine Daten für dieses Gebiet");
                     await File.WriteAllTextAsync(file, json, ct);
                     return json;

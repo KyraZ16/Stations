@@ -200,7 +200,8 @@ public sealed class MapData
         };
     }
 
-    public static MapData Build(Area area, OsmData osm)
+    /// <param name="progress">Called with 0..1 while building (any thread).</param>
+    public static MapData Build(Area area, OsmData osm, Action<double>? progress = null)
     {
         var proj = new Projection(area.Lat, area.Lon);
         var m = new MapData { Area = area, Proj = proj };
@@ -215,8 +216,10 @@ public sealed class MapData
             return pts;
         }
 
+        int wi = 0;
         foreach (var w in osm.Ways)
         {
+            if (++wi % 2000 == 0) progress?.Invoke(0.85 * wi / osm.Ways.Count);
             var t = w.Tags;
             if (t.ContainsKey("highway") && w.Nodes != null) m.AddRoad(w, t, nodes);
             else if (t.ContainsKey("building")) m.AddBuilding(GeomPts(w.Geometry), t);
@@ -257,6 +260,7 @@ public sealed class MapData
             }
         }
 
+        progress?.Invoke(0.86);
         foreach (var r in osm.Relations)
         {
             var kind = GetPolyKind(r.Tags);
@@ -267,6 +271,7 @@ public sealed class MapData
             if (rings.Count > 0) m.Polys.Add(new AreaPoly { Kind = kind.Value, Rings = rings });
         }
 
+        progress?.Invoke(0.92);
         m.BuildCells();
         // Draw large polygons first so small ones (ponds in parks) stay visible.
         m.Polys.Sort((p, q) => RingArea(q.Rings[0]).CompareTo(RingArea(p.Rings[0])));

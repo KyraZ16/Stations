@@ -9,12 +9,15 @@ namespace Stations;
 public partial class Main : Node
 {
     private StartScreen? _start;
+    private LoadingScreen? _loading;
+    private CancellationTokenSource? _cts;
     private GameView? _view;
 
     /// <summary>
     /// Developer options after "--" on the command line:
     /// --autostart (Hamburg sandbox), --demo (build demo network, skip to 08:00),
-    /// --shot=path.png (save a screenshot and quit), --zoom=factor (zoom in from the overview).
+    /// --shot=path.png (save a screenshot and quit), --zoom=factor (zoom in from the overview),
+    /// --loadingshot=path.png (screenshot of the loading screen).
     /// </summary>
     private readonly Dictionary<string, string> _dev = OS.GetCmdlineUserArgs()
         .Select(a => a.TrimStart('-').Split('=', 2))
@@ -26,14 +29,14 @@ public partial class Main : Node
         GetTree().Root.Theme = Ui.Theme;
         ShowStart();
         if (_dev.ContainsKey("autostart"))
-            _ = LoadGame(new StartScreen.Choice(new Core.Area("Hamburg Innenstadt", 53.5530, 9.9930, 2500), true, false), null);
+            StartLoading(new StartScreen.Choice(new Core.Area("Hamburg Innenstadt", 53.5530, 9.9930, 2500), true, false), null);
         else if (_dev.TryGetValue("shot", out var shot))
             TakeShot(shot);
     }
 
-    private async void TakeShot(string path)
+    private async void TakeShot(string path, int frames = 20)
     {
-        for (int i = 0; i < 20; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        for (int i = 0; i < frames; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         GetViewport().GetTexture().GetImage().SavePng(path);
         GetTree().Quit();
     }
@@ -97,7 +100,7 @@ public partial class Main : Node
         var save = SaveStore.Load();
         string? info = save == null ? null : $"{save.Area.Name.Split(',')[0]}, Tag {(int)(save.Time / 86400) + 1}";
         _start = new StartScreen { SaveInfo = info };
-        _start.Chosen += c => _ = LoadGame(c, c.Continue ? save : null);
+        _start.Chosen += c => StartLoading(c, c.Continue ? save : null);
         var layer = new CanvasLayer();
         layer.AddChild(_start);
         AddChild(layer);
@@ -155,29 +158,75 @@ public partial class Main : Node
                  $"{game.Vehicles.Count} Fahrzeuge, {game.Drivers.Count} Fahrer, Gleise {game.TrackLength:F0} m, Fahrgäste {game.Today.Trips}");
     }
 
+    /// <summary>Replace the start screen with the loading screen and start loading.</summary>
+    private void StartLoading(StartScreen.Choice choice, SaveData? save)
+    {
+        _start?.GetParent().QueueFree();
+        _start = null;
+        var area = save?.Area ?? choice.Area;
+        _loading = new LoadingScreen { CityName = area.Name };
+        _loading.Cancelled += () =>
+        {
+            _cts?.Cancel();
+            CloseLoading();
+            ShowStart();
+        };
+        _loading.Retry += () => _ = LoadGame(choice, save);
+        var layer = new CanvasLayer { Layer = 10 };
+        layer.AddChild(_loading);
+        AddChild(layer);
+        if (_dev.TryGetValue("loadingshot", out var shot)) TakeShot(shot, frames: _dev.TryGetValue("frames", out var f) && int.TryParse(f, out int fr) ? fr : 12);
+        _ = LoadGame(choice, save);
+    }
+
+    private void CloseLoading()
+    {
+        _loading?.GetParent().QueueFree();
+        _loading = null;
+    }
+
     private async Task LoadGame(StartScreen.Choice choice, SaveData? save)
     {
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        var loading = _loading!;
         var area = save?.Area ?? choice.Area;
         try
         {
-            string json = await Overpass.LoadAsync(area, SaveStore.CacheDir, msg => _start?.SetStatus(msg));
-            _start?.SetStatus("Baue Straßennetz und Stadtmodell …");
-            // Parsing and graph building take a moment: keep the UI responsive.
-            var map = await Task.Run(() => MapData.Build(area, OsmData.Parse(json)));
-            if (map.Graph.SegmentCount == 0) throw new InvalidDataException("In diesem Gebiet wurden keine Straßen gefunden.");
-            var game = save != null ? Game.Restore(map, save) : new Game(map, choice.Sandbox);
+            loading.Report(0, 0, "Prüfe, ob die Stadt schon im Cache liegt …");
+            string json = await Overpass.LoadAsync(area, SaveStore.CacheDir, msg => loading.Report(0, 0.05f, msg), ct,
+                // Overpass sends no total size: approach 100 % smoothly with the received megabytes
+                bytes => loading.Report(0, 1 - MathF.Exp(-bytes / 15e6f), $"{bytes / 1e6:0.0} MB empfangen"));
 
-            _start?.GetParent().QueueFree();
-            _start = null;
+            loading.Report(1, 0.3f, $"{json.Length / 1e6:0.0} MB OpenStreetMap-Daten werden gelesen …");
+            var osm = await Task.Run(() => OsmData.Parse(json), ct);
+            loading.Report(2, 0, $"{osm.Ways.Count:N0} Wege und {osm.Nodes.Count:N0} Knoten");
+            var map = await Task.Run(() => MapData.Build(area, osm, p => loading.Report(2, (float)p)), ct);
+            if (map.Graph.SegmentCount == 0) throw new InvalidDataException("In diesem Gebiet wurden keine Straßen gefunden.");
+
+            loading.Report(3, 0.3f, save != null ? "Spielstand wird geladen, Linien werden berechnet …" : "Neues Spiel wird angelegt …");
+            var game = await Task.Run(() => save != null ? Game.Restore(map, save) : new Game(map, choice.Sandbox), ct);
+
+            // Building the view triangulates all buildings on the main thread: show the step first.
+            loading.Report(4, 0.3f, $"{map.Buildings.Count:N0} Gebäude und {map.Roads.Count:N0} Straßen werden gezeichnet …");
+            for (int i = 0; i < 3; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (ct.IsCancellationRequested) return;
             _view = new GameView { Game = game };
             _view.MenuRequested += BackToMenu;
             AddChild(_view);
+            for (int i = 0; i < 3; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            CloseLoading();
             RunDevOptions(game);
+        }
+        catch (OperationCanceledException)
+        {
+            // player went back to the menu
         }
         catch (Exception ex)
         {
             GD.PushError(ex.ToString());
-            _start?.SetStatus(ex.Message, error: true);
+            if (!ct.IsCancellationRequested) loading.Fail(ex.Message);
         }
     }
 
