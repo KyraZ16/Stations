@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Game logic without any Godot dependency: map import, road graph, simulation. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Stations.Core</RootNamespace>
+    <LangVersion>12</LangVersion>
+  </PropertyGroup>
+</Project>

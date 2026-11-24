@@ -1,2 +1,6 @@
 node_modules
 dist
+godot/**/bin/
+godot/**/obj/
+godot/**/.godot/
+godot/Tests/cache/

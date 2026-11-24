@@ -1,0 +1,13 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <RootNamespace>Stations</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Engine-independent game logic (map import, simulation). -->
+    <ProjectReference Include="..\Core\Stations.Core.csproj" />
+  </ItemGroup>
+</Project>

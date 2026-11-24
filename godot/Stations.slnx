@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Core/Stations.Core.csproj" />
+  <Project Path="Game/Stations.csproj" />
+  <Project Path="Tests/Stations.Tests.csproj" />
+</Solution>

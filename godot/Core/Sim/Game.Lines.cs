@@ -1,0 +1,460 @@
+using Stations.Core.Map;
+
+namespace Stations.Core.Sim;
+
+public sealed partial class Game
+{
+    // ---------------------------------------------------------------- lines
+
+    /// <summary>Route a line's runs. Returns null and an error message on failure.</summary>
+    private List<Run>? BuildRuns(List<int> stopIds, bool circular, ModeId mode, out string? error)
+    {
+        var seqs = circular
+            ? new List<List<int>> { stopIds.Append(stopIds[0]).ToList() }
+            : new List<List<int>> { stopIds.ToList(), Enumerable.Reverse(stopIds).ToList() };
+        double vmax = Modes.Get(mode).Vehicle.MaxSpeed;
+        var runs = new List<Run>();
+        foreach (var seq in seqs)
+        {
+            var path = new RoutePath();
+            var offsets = new List<double> { 0 };
+            var times = new List<double> { 0 };
+            for (int i = 0; i + 1 < seq.Count; i++)
+            {
+                var a = Stops[seq[i]];
+                var b = Stops[seq[i + 1]];
+                var r = RouteFor(mode, a.Pos, b.Pos);
+                if (r == null)
+                {
+                    error = $"Keine befahrbare Verbindung von „{a.Name}“ nach „{b.Name}“";
+                    return null;
+                }
+                double s0 = path.Length;
+                path.Append(r);
+                offsets.Add(path.Length);
+                times.Add(times[i] + path.TravelTime(s0, path.Length, vmax) + DwellEstimate);
+            }
+            runs.Add(new Run { Path = path, StopIds = seq, Offsets = offsets, Times = times });
+        }
+        error = null;
+        return runs;
+    }
+
+    private static double CycleTime(List<Run> runs) => runs.Sum(r => r.Times[^1] + MinLayover);
+
+    /// <summary>Try routing a draft line (for previews).</summary>
+    public RouteResult? PreviewRoute(Stop a, Stop b) => RouteFor(a.Mode, a.Pos, b.Pos);
+
+    public TransitLine? CreateLine(List<int> stopIds, bool circular, ModeId mode = ModeId.Bus)
+    {
+        if (stopIds.Count < 2)
+        {
+            Notify("Eine Linie braucht mindestens zwei Haltestellen", true);
+            return null;
+        }
+        if (stopIds.Any(id => !Stops.TryGetValue(id, out var s) || s.Mode != mode))
+        {
+            string name = Modes.Get(mode).Name;
+            Notify($"Eine {name}linie kann nur {name}-Haltestellen anfahren", true);
+            return null;
+        }
+        var runs = BuildRuns(stopIds, circular, mode, out var err);
+        if (runs == null)
+        {
+            Notify(err!, true);
+            return null;
+        }
+        var used = Lines.Values.Select(l => l.Name).ToHashSet();
+        int n = 1;
+        while (used.Contains(n.ToString())) n++;
+        int id = _nextId++;
+        var line = new TransitLine
+        {
+            Id = id, Name = n.ToString(), Mode = mode, StopIds = stopIds.ToList(), Circular = circular, Runs = runs,
+            CycleTime = CycleTime(runs), Color = Util.LineColors[Lines.Count % Util.LineColors.Length],
+        };
+        Lines[id] = line;
+        _routerDirty = true;
+        OnChange();
+        return line;
+    }
+
+    /// <summary>
+    /// Re-route a line after its stops changed. Vehicles in service keep running: each one
+    /// drives to its next stop on the new route, and riding passengers are remapped.
+    /// Returns an error message, or null on success.
+    /// </summary>
+    public string? RebuildLine(TransitLine line)
+    {
+        var runs = BuildRuns(line.StopIds, line.Circular, line.Mode, out var err);
+        if (runs == null) return err;
+        var oldRuns = line.Runs;
+        line.Runs = runs;
+        line.CycleTime = CycleTime(runs);
+        line.Version++;
+
+        // Waiting passengers planned with the old stop indices: let them re-plan (they are regenerated).
+        foreach (var s in Stops.Values)
+        {
+            int before = s.Waiting.Count;
+            s.Waiting.RemoveAll(p => p.Legs.Skip(p.LegIdx).Any(l => l.Line == line.Id));
+            Today.Lost += before - s.Waiting.Count;
+        }
+
+        foreach (var v in Vehicles.Values)
+        {
+            if (v.LineId != line.Id || v.State == VehicleState.Depot) continue;
+            if (v.State == VehicleState.Deadhead && v.DeadheadTo == DeadheadTarget.Depot) continue;
+            if (v.State == VehicleState.Deadhead && v.DeadheadTo == DeadheadTarget.Line)
+            {
+                Dispatch(v, DeadheadTarget.Line);
+                continue;
+            }
+            var oldRun = v.RunIdx < oldRuns.Count ? oldRuns[v.RunIdx] : null;
+            int r = Math.Min(v.RunIdx, runs.Count - 1);
+            var run = runs[r];
+            int k = oldRun != null && v.StopIdx < oldRun.StopIds.Count ? run.StopIds.IndexOf(oldRun.StopIds[v.StopIdx]) : -1;
+            if (k < 0)
+            {
+                // Stop no longer on the line: continue at the nearest stop of the new route.
+                double bd = double.PositiveInfinity;
+                for (int i = 0; i < run.StopIds.Count - 1; i++)
+                {
+                    var p = Stops[run.StopIds[i]].Pos;
+                    double d = Util.Hypot(p.X - v.X, p.Y - v.Y);
+                    if (d < bd) { bd = d; k = i; }
+                }
+            }
+            // Remap riding passengers to the new stop indices
+            int kk = k;
+            v.Passengers.RemoveAll(p =>
+            {
+                var leg = p.Legs[p.LegIdx];
+                int ai = run.StopIds.IndexOf(leg.AlightStop, kk);
+                bool laterUse = p.Legs.Skip(p.LegIdx + 1).Any(l => l.Line == line.Id);
+                if (ai < 0 || laterUse)
+                {
+                    Today.Lost++;
+                    return true;
+                }
+                leg.Alight = ai;
+                leg.Run = r;
+                leg.Ver = line.Version;
+                return false;
+            });
+            if (v.State == VehicleState.Layover && k == 0)
+            {
+                double arrived = v.ArrivedAt;
+                EnterLayover(v, line, r);
+                v.ArrivedAt = arrived;
+            }
+            else
+            {
+                Rejoin(v, line, r, k);
+            }
+        }
+        _routerDirty = true;
+        OnChange();
+        return null;
+    }
+
+    /// <summary>Replace a line's stop sequence. Keeps the old one if routing fails.</summary>
+    public bool SetLineStops(TransitLine line, List<int> stopIds)
+    {
+        for (int i = 1; i < stopIds.Count; i++)
+        {
+            if (stopIds[i] == stopIds[i - 1])
+            {
+                Notify("Dieselbe Haltestelle kann nicht zweimal hintereinander angefahren werden", true);
+                return false;
+            }
+        }
+        if (stopIds.Count < 2)
+        {
+            Notify("Eine Linie braucht mindestens zwei Haltestellen", true);
+            return false;
+        }
+        var old = line.StopIds;
+        line.StopIds = stopIds;
+        if (RebuildLine(line) is string err)
+        {
+            line.StopIds = old;
+            Notify(err, true);
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>Send a vehicle in service to stop index k of run r on the (changed) line.</summary>
+    private void Rejoin(Vehicle v, TransitLine line, int r, int k)
+    {
+        var stop = Stops[line.Runs[r].StopIds[k]];
+        var from = SnapFor(v.Mode, v.X, v.Y, 80);
+        var route = from is RoadPos f ? RouteFor(v.Mode, f, stop.Pos) : null;
+        if (route == null)
+        {
+            Today.Lost += v.Passengers.Count;
+            v.Passengers.Clear();
+            Dispatch(v, DeadheadTarget.Line);
+            return;
+        }
+        v.Path = RoutePath.From(route);
+        v.S = 0;
+        v.Seg = 0;
+        v.RunIdx = r;
+        v.StopIdx = k;
+        v.State = VehicleState.Deadhead;
+        v.DeadheadTo = DeadheadTarget.Rejoin;
+    }
+
+    public void SetCircular(TransitLine line, bool circular)
+    {
+        bool old = line.Circular;
+        line.Circular = circular;
+        if (RebuildLine(line) is string err)
+        {
+            line.Circular = old;
+            Notify(err, true);
+        }
+    }
+
+    public void DeleteLine(int id)
+    {
+        if (!Lines.ContainsKey(id)) return;
+        foreach (var v in Vehicles.Values)
+        {
+            if (v.LineId != id) continue;
+            v.LineId = null;
+            Dispatch(v, DeadheadTarget.Depot);
+        }
+        PurgePassengers(id);
+        Lines.Remove(id);
+        _routerDirty = true;
+        OnChange();
+    }
+
+    private void PurgePassengers(int lineId)
+    {
+        foreach (var s in Stops.Values)
+        {
+            int before = s.Waiting.Count;
+            s.Waiting.RemoveAll(p => p.Legs.Skip(p.LegIdx).Any(l => l.Line == lineId));
+            Today.Lost += before - s.Waiting.Count;
+        }
+        foreach (var v in Vehicles.Values)
+        {
+            if (v.LineId != lineId) continue;
+            Today.Lost += v.Passengers.Count;
+            v.Passengers.Clear();
+        }
+    }
+
+    private static bool HeadingHome(Vehicle v) => v.State == VehicleState.Deadhead && v.DeadheadTo == DeadheadTarget.Depot;
+
+    /// <summary>Vehicles of the line that are out of the depot and not heading back.</summary>
+    public int ActiveVehicles(TransitLine line) =>
+        Vehicles.Values.Count(v => v.LineId == line.Id && v.State != VehicleState.Depot && !HeadingHome(v));
+
+    /// <summary>Vehicles the timetable needs now (looking ahead so they leave the depot in time).</summary>
+    public int RequiredVehicles(TransitLine line) => Math.Max(
+        Timetable.VehiclesFor(line.CycleTime, line.Timetable.TargetHeadway(Time)),
+        Timetable.VehiclesFor(line.CycleTime, line.Timetable.TargetHeadway(Time + DispatchLead)));
+
+    public int PeakVehicles(TransitLine line) => line.Timetable.PeakVehicles(line.CycleTime);
+
+    /// <summary>Effective headway right now: the timetable's, or longer if vehicles are missing.</summary>
+    public double Headway(TransitLine line)
+    {
+        double target = line.Timetable.TargetHeadway(Time);
+        int n = ActiveVehicles(line);
+        if (!double.IsFinite(target) || n == 0) return double.PositiveInfinity;
+        return Math.Max(target, line.CycleTime / n);
+    }
+
+    public void SetTimetable(TransitLine line, Timetable tt)
+    {
+        line.Timetable = tt;
+        _routerDirty = true;
+        OnChange();
+    }
+
+    public List<Vehicle> VehiclesOf(TransitLine line) => Vehicles.Values.Where(v => v.LineId == line.Id).ToList();
+
+    public List<TransitLine> LinesAtStop(int stopId) => Lines.Values.Where(l => l.StopIds.Contains(stopId)).ToList();
+
+    // ---------------------------------------------------------------- vehicles
+
+    public Vehicle? BuyVehicle(int depotId)
+    {
+        if (!Depots.TryGetValue(depotId, out var depot)) return null;
+        var def = Modes.Get(depot.Mode).Vehicle;
+        if (!Pay(def.Price)) return null;
+        int id = _nextId++;
+        _vehicleCounter++;
+        var v = new Vehicle
+        {
+            Id = id, Name = $"{def.Name} {_vehicleCounter}", Mode = depot.Mode, DepotId = depotId,
+            X = depot.Pos.X, Y = depot.Pos.Y,
+        };
+        Vehicles[id] = v;
+        OnChange();
+        return v;
+    }
+
+    public void SellVehicle(int id)
+    {
+        if (!Vehicles.TryGetValue(id, out var v)) return;
+        if (v.State != VehicleState.Depot)
+        {
+            Notify("Fahrzeuge können nur im Betriebshof verkauft werden", true);
+            return;
+        }
+        Money += Modes.Get(v.Mode).Vehicle.Price * 0.5;
+        Vehicles.Remove(id);
+        OnChange();
+    }
+
+    /// <summary>
+    /// Put a vehicle into a line's pool (or take it out with null). Vehicles in the depot wait
+    /// for the dispatcher; vehicles on the road switch over directly.
+    /// </summary>
+    public void AssignVehicle(int id, int? lineId)
+    {
+        if (!Vehicles.TryGetValue(id, out var v) || v.LineId == lineId) return;
+        if (v.LineId != null)
+        {
+            Today.Lost += v.Passengers.Count;
+            v.Passengers.Clear();
+        }
+        v.LineId = lineId;
+        if (v.State != VehicleState.Depot) Dispatch(v, lineId == null ? DeadheadTarget.Depot : DeadheadTarget.Line);
+        _dispatchTimer = DispatchInterval; // run the dispatcher on the next step
+        _routerDirty = true;
+        OnChange();
+    }
+
+    /// <summary>Assign (or buy) vehicles until the line's pool covers the timetable's peak.</summary>
+    public void AssignMissing(TransitLine line)
+    {
+        int missing = PeakVehicles(line) - VehiclesOf(line).Count;
+        while (missing-- > 0)
+        {
+            int before = VehiclesOf(line).Count;
+            AddVehicleToLine(line);
+            if (VehiclesOf(line).Count == before) break;
+        }
+    }
+
+    /// <summary>Add a vehicle to a line: reuse an idle one or buy a new one at the closest depot.</summary>
+    public void AddVehicleToLine(TransitLine line)
+    {
+        var first = Stops[line.StopIds[0]].Pos;
+        double Dist(Depot d) => Util.Hypot(d.Pos.X - first.X, d.Pos.Y - first.Y);
+        var idle = Vehicles.Values.Where(v => v.LineId == null && v.Mode == line.Mode)
+            .OrderBy(v => Dist(Depots[v.DepotId])).FirstOrDefault();
+        if (idle != null)
+        {
+            AssignVehicle(idle.Id, line.Id);
+            return;
+        }
+        var depot = Depots.Values.Where(d => d.Mode == line.Mode).OrderBy(Dist).FirstOrDefault();
+        if (depot == null)
+        {
+            Notify(line.Mode == ModeId.Tram ? "Baue zuerst einen Tram-Betriebshof an den Gleisen" : "Baue zuerst einen Betriebshof", true);
+            return;
+        }
+        var nv = BuyVehicle(depot.Id);
+        if (nv != null) AssignVehicle(nv.Id, line.Id);
+    }
+
+    public void RemoveVehicleFromLine(TransitLine line)
+    {
+        // Prefer a vehicle in the depot, then one heading home, then the emptiest one
+        int Rank(Vehicle v) => v.State == VehicleState.Depot ? -1 : HeadingHome(v) ? 0 : 1;
+        var pick = VehiclesOf(line).OrderBy(Rank).ThenBy(v => v.Passengers.Count).FirstOrDefault();
+        if (pick != null) AssignVehicle(pick.Id, null);
+    }
+
+    /// <summary>
+    /// Start vehicles from the depot when the timetable needs more of them.
+    /// Surplus vehicles return to the depot from the terminus (see StepVehicle).
+    /// </summary>
+    private void RunDispatcher()
+    {
+        foreach (var line in Lines.Values)
+        {
+            line.DriverShortage = false;
+            int active = ActiveVehicles(line);
+            int req = RequiredVehicles(line);
+            if (active >= req) continue;
+            var first = Stops[line.Runs[0].StopIds[0]].Pos;
+            var waiting = VehiclesOf(line).Where(v => v.State == VehicleState.Depot)
+                .OrderBy(v => Util.Hypot(Depots[v.DepotId].Pos.X - first.X, Depots[v.DepotId].Pos.Y - first.Y));
+            foreach (var v in waiting)
+            {
+                if (active >= req) break;
+                if (!TakeDriver(v))
+                {
+                    line.DriverShortage = true;
+                    continue;
+                }
+                Dispatch(v, DeadheadTarget.Line);
+                if (v.State != VehicleState.Depot) active++;
+            }
+        }
+        string sig = string.Join(",", Lines.Values.Select(l => Math.Round(Headway(l))));
+        if (sig != _headwaySig)
+        {
+            _headwaySig = sig;
+            _routerDirty = true;
+        }
+    }
+
+    private void Dispatch(Vehicle v, DeadheadTarget to)
+    {
+        if (v.State == VehicleState.Depot && to == DeadheadTarget.Depot) return;
+        if (v.State == VehicleState.Depot && !TakeDriver(v)) return;
+        var depot = Depots[v.DepotId];
+        var from = v.State == VehicleState.Depot ? depot.Pos : SnapFor(v.Mode, v.X, v.Y, 80) ?? depot.Pos;
+        var dest = depot.Pos;
+        if (to == DeadheadTarget.Line)
+        {
+            if (v.LineId is not int lid || !Lines.TryGetValue(lid, out var line)) return;
+            dest = Stops[line.Runs[0].StopIds[0]].Pos;
+        }
+        var r = RouteFor(v.Mode, from, dest);
+        if (r == null)
+        {
+            if (to == DeadheadTarget.Line)
+            {
+                Notify($"{v.Name} findet keinen Weg vom Betriebshof zur Linie", true);
+                v.LineId = null;
+            }
+            ParkInDepot(v);
+            return;
+        }
+        if (v.State == VehicleState.Depot)
+        {
+            v.X = depot.Pos.X;
+            v.Y = depot.Pos.Y;
+        }
+        v.Path = RoutePath.From(r);
+        v.S = 0;
+        v.Seg = 0;
+        v.State = VehicleState.Deadhead;
+        v.DeadheadTo = to;
+    }
+
+    private void ParkInDepot(Vehicle v)
+    {
+        var depot = Depots[v.DepotId];
+        v.State = VehicleState.Depot;
+        v.Path = null;
+        v.V = 0;
+        v.X = depot.Pos.X;
+        v.Y = depot.Pos.Y;
+        Today.Lost += v.Passengers.Count;
+        v.Passengers.Clear();
+        ReleaseDriver(v);
+    }
+}
