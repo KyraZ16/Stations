@@ -536,7 +536,7 @@ public partial class SidePanel : PanelContainer
 
         Space();
         Add(Ui.Section("Fahrzeugpool"));
-        var models = Modes.Get(l.Mode).Models;
+        var models = Modes.Get(l.Mode).Models.Where(m => G.Unlocked(m) || m.Id == l.PreferredModel).ToList();
         if (models.Count > 1)
         {
             var mrow = new HBoxContainer();
@@ -747,6 +747,13 @@ public partial class SidePanel : PanelContainer
         var buy = Actions();
         foreach (var model in Modes.Get(d.Mode).Models)
         {
+            if (ResearchTree.ForModel(model.Id) is string need && !G.Has(need))
+            {
+                var locked = Ui.Btn($"🔒 {model.Name}", () => UI.Select(new Selection("research", 0)));
+                locked.TooltipText = $"{model.Description}\n{Game.NeedsResearch(need)} – klicken öffnet die Forschung";
+                buy.AddChild(locked);
+                continue;
+            }
             var b = Ui.Btn($"+ {model.Name} ({Util.Money(model.Price)})", () =>
             {
                 if (G.BuyVehicle(d.Id, model.Id) is Vehicle nv) Toast($"{nv.Name} gekauft");

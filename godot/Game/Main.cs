@@ -55,6 +55,7 @@ public partial class Main : Node
             {
                 // sample edits: wash bay, workshop, Gelenkbus spot and a charger next to a spot
                 var d0 = game.Depots.Values.First();
+                game.Researched.UnionWith(new[] { "artic", "charge" }); // the sample uses a Gelenkbus spot and a charger
                 game.PlaceModule(d0, Core.Sim.ModuleType.Road, 16, 8, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Wash, 17, 8, 1);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Workshop, 1, 8, 0, 6, 6); // drawn: three lanes

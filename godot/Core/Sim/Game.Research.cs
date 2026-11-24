@@ -7,6 +7,12 @@ public static class ResearchTree
 {
     public static readonly ResearchDef[] All =
     {
+        new("artic", "Gelenkbusse", "Fahrzeuge", 80, 36,
+            "Gelenkbus (18 m, 120 Plätze) und Gelenkbus-Stellplatz freischalten", null),
+        new("charge", "Ladetechnik", "Fahrzeuge", 100, 40,
+            "Ladestationen für den Betriebshof freischalten", null),
+        new("ebus", "Elektrobusse", "Fahrzeuge", 150, 60,
+            "E-Bus (Batterie, 250 km Reichweite, wenig Verschleiß) freischalten", "charge"),
         new("pay2", "Kartenzahlung am Automaten", "Bezahlen", 60, 24,
             "Stufe 2: An den Automaten auch mit Karte zahlen – weniger Bargeld beim Fahrer, schnellerer Einstieg, +3 % Fahrgäste, Schalter 15 % schneller", null),
         new("pay3", "Kontaktlos am Automaten, Automaten im Fahrzeug", "Bezahlen", 150, 60,
@@ -22,6 +28,12 @@ public static class ResearchTree
     };
 
     public static ResearchDef Get(string id) => All.First(r => r.Id == id);
+
+    /// <summary>Research a vehicle model needs (null: available from the start).</summary>
+    public static string? ForModel(string modelId) => modelId switch { "gelenkbus" => "artic", "ebus" => "ebus", _ => null };
+
+    /// <summary>Research a depot module needs (null: available from the start).</summary>
+    public static string? ForModule(ModuleType t) => t switch { ModuleType.LongBusSpot => "artic", ModuleType.Charger => "charge", _ => null };
 
     public static readonly string[] PaymentNames =
     {
@@ -52,6 +64,12 @@ public sealed partial class Game
     public int ResearchersAtWork { get; private set; }
 
     public bool Has(string id) => Researched.Contains(id);
+
+    public bool Unlocked(VehicleDef d) => ResearchTree.ForModel(d.Id) is not string r || Has(r);
+    public bool Unlocked(ModuleType t) => ResearchTree.ForModule(t) is not string r || Has(r);
+
+    /// <summary>Message for something that still needs research.</summary>
+    public static string NeedsResearch(string researchId) => $"Noch nicht erforscht: „{ResearchTree.Get(researchId).Name}“ (Forschung)";
 
     /// <summary>1 = cash at the driver … 4 = contactless in the vehicle.</summary>
     public int PaymentLevel => 1 + (Has("pay2") ? 1 : 0) + (Has("pay3") ? 1 : 0) + (Has("pay4") ? 1 : 0);

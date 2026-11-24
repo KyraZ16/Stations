@@ -289,6 +289,11 @@ public sealed partial class Game
     {
         if (!Depots.TryGetValue(depotId, out var depot)) return null;
         var def = Modes.Model(depot.Mode, modelId);
+        if (ResearchTree.ForModel(def.Id) is string need && !Has(need))
+        {
+            Notify($"{def.Name}: {NeedsResearch(need)}", true);
+            return null;
+        }
         if (!CanHouse(depot, def))
         {
             Notify(def.Length > 15 && depot.Mode == ModeId.Bus
@@ -329,6 +334,7 @@ public sealed partial class Game
         if (type == ModuleType.TramSpot && d.Mode != ModeId.Tram) return "Abstellgleise gibt es nur im Tram-Betriebshof";
         if (type is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.Charger && d.Mode == ModeId.Tram)
             return "Im Tram-Betriebshof werden Abstellgleise gebaut";
+        if (ResearchTree.ForModule(type) is string need && !Has(need)) return NeedsResearch(need);
         if (d.Layout.CanPlace(type, x, y, rot, w, h) is string err) return err;
         if (!Pay(DepotLayout.Cost(type, w, h))) return "Nicht genug Geld";
         d.Layout.Modules.Add(new PlacedModule { Type = type, X = x, Y = y, Rot = w > 0 ? 0 : rot, Sw = w, Sh = h });
@@ -414,6 +420,7 @@ public sealed partial class Game
         var first = Stops[line.StopIds[0]].Pos;
         double Dist(Depot d) => Util.Hypot(d.Pos.X - first.X, d.Pos.Y - first.Y);
         var def = Modes.Model(line.Mode, line.PreferredModel);
+        if (!Unlocked(def)) def = Modes.Get(line.Mode).Vehicle; // preferred model not researched yet
         var idle = Vehicles.Values.Where(v => v.LineId == null && v.Mode == line.Mode && (line.PreferredModel == null || v.ModelId == def.Id))
             .OrderBy(v => Dist(Depots[v.DepotId])).FirstOrDefault();
         if (idle != null)

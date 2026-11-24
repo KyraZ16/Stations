@@ -176,6 +176,12 @@ var eLine = eg.CreateLine(new List<int>
     eg.AddStop(map.Graph.Snap(-1600, -600, 200)!.Value)!.Id,
     eg.AddStop(map.Graph.Snap(400, -600, 200)!.Value)!.Id,
 }, false)!;
+Check(eg.BuyVehicle(eDepot.Id, "ebus") == null && eg.PlaceModule(eDepot, ModuleType.Charger, 1, 1, 0) != null, "E-Bus und Ladestation brauchen Forschung");
+eLine.PreferredModel = "ebus";
+eg.AssignMissing(eLine); // preferred model not researched: falls back to the Solobus
+Check(eg.VehiclesOf(eLine).Count > 0 && eg.VehiclesOf(eLine).All(v => v.ModelId == "solobus"), "ohne Forschung kommen Solobusse");
+foreach (var v in eg.VehiclesOf(eLine).ToList()) eg.SellVehicle(v.Id);
+eg.Researched.UnionWith(new[] { "artic", "charge", "ebus" });
 eLine.PreferredModel = "ebus";
 eg.AssignMissing(eLine);
 eg.HireMissingDrivers();
@@ -193,6 +199,10 @@ Check(eg.BuyVehicle(eDepot.Id, "gelenkbus") != null, "mit Gelenkbus-Stellplatz k
 var eRestored = Game.Restore(map, SaveData.FromJson(eg.Serialize().ToJson()));
 Check(eRestored.Vehicles.Values.Select(v => (v.ModelId, Math.Round(v.Charge, 3))).SequenceEqual(eg.Vehicles.Values.Select(v => (v.ModelId, Math.Round(v.Charge, 3)))),
     "Modell und Akkustand werden gespeichert");
+var oldSave = eg.Serialize();
+oldSave.Researched = null; // a save from before research
+var eOld = Game.Restore(map, SaveData.FromJson(oldSave.ToJson()));
+Check(eOld.Has("ebus") && eOld.Has("charge") && eOld.Has("artic"), "alte Spielstände behalten E-Busse, Ladestationen und Gelenkbusse");
 
 Console.WriteLine("== Leben im Betriebshof");
 var yg = new Game(map, sandbox: true, seed: 3);

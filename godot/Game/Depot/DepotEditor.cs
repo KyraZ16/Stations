@@ -865,6 +865,14 @@ public partial class DepotEditor : Node3D
         {
             var def = DepotLayout.Def(t);
             string price = DepotLayout.IsDrawable(t) ? $"{Util.Money(def.Cost / (def.W * def.H))}/Feld" : Util.Money(def.Cost);
+            if (ResearchTree.ForModule(t) is string need && !Game.Has(need))
+            {
+                var lockedBtn = PaletteButton($"🔒 {def.Name}  ·  Forschung", false, () => SetStatus(Game.NeedsResearch(need), true));
+                lockedBtn.TooltipText = $"{def.Effect}\n{Game.NeedsResearch(need)}";
+                lockedBtn.Modulate = new Color(1, 1, 1, 0.6f);
+                _palette.AddChild(lockedBtn);
+                continue;
+            }
             var b = PaletteButton($"{def.Name}  ·  {price}", !_bulldoze && _tool == t, () => SetTool(t, false));
             b.TooltipText = def.Effect;
             _palette.AddChild(b);

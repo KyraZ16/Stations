@@ -239,6 +239,13 @@ public sealed partial class Game
                         g.Workers[id] = new Worker { Id = id, Name = Staff.RandomName(g.Rng), DepotId = depot.Id, Role = role, Shift = (ShiftId)(i % 3) };
                     }
         }
+        // Older saves may already use models and modules that now need research: keep them usable
+        foreach (var v in g.Vehicles.Values)
+            if (ResearchTree.ForModel(v.ModelId) is string need) g.Researched.Add(need);
+        foreach (var d in g.Depots.Values)
+            foreach (var m in d.Layout.Modules)
+                if (ResearchTree.ForModule(m.Type) is string need) g.Researched.Add(need);
+        if (g.Has("ebus")) g.Researched.Add("charge");
         foreach (var d in g.Depots.Values) g.EnsureHomeSpots(d);
         // Vehicles start in the depot; the dispatcher sends them out per timetable.
         g._dispatchTimer = DispatchInterval;
