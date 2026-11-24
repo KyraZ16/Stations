@@ -46,6 +46,26 @@ public partial class Main : Node
             game.Advance(3 * 3600); // 05:00 → 08:00, morning peak
         }
         if (_dev.ContainsKey("tooltest")) ToolTest(game, _view!.Interaction);
+        if (_dev.TryGetValue("time", out var hh) && double.TryParse(hh, System.Globalization.CultureInfo.InvariantCulture, out double hour))
+        {
+            // fast-forward to the given clock hour (next occurrence)
+            double target = Math.Floor(game.Time / 86400) * 86400 + hour * 3600;
+            if (target <= game.Time) target += 86400;
+            game.Advance(target - game.Time);
+        }
+        if (_dev.ContainsKey("depot") && game.Depots.Count > 0)
+        {
+            if (_dev["depot"] == "edit")
+            {
+                // sample edits: a connected wash bay and a workshop without access
+                var d0 = game.Depots.Values.First();
+                game.PlaceModule(d0, Core.Sim.ModuleType.Road, 16, 8, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Wash, 17, 8, 1);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Workshop, 2, 9, 0);
+            }
+            if (_dev["depot"] == "tram") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.Tram).Id);
+            else _view!.OpenDepotEditor(game.Depots.Values.First().Id);
+        }
         if (_dev.TryGetValue("zoom", out var z) && float.TryParse(z, System.Globalization.CultureInfo.InvariantCulture, out float zf))
             _view!.ZoomBy(zf);
         if (_dev.ContainsKey("debugui"))

@@ -114,5 +114,32 @@ Check(restored.Lines.Count == game.Lines.Count && restored.Stops.Count == game.S
 restored.Advance(1800);
 Check(restored.Vehicles.Values.Any(v => v.State != VehicleState.Depot), "geladenes Spiel läuft weiter");
 
+Console.WriteLine("== Betriebshof-Layout");
+var yard = DepotLayout.Starter(ModeId.Bus);
+Check(yard.VehicleCapacity(ModeId.Bus) == 8 && yard.DriverCapacity() == DepotLayout.DriversPerOffice, $"Start-Layout: {yard.VehicleCapacity(ModeId.Bus)} Stellplätze, {yard.DriverCapacity()} Fahrerplätze");
+var lonely = new PlacedModule { Type = ModuleType.BusSpot, X = 1, Y = 9 };
+yard.Modules.Add(lonely);
+Check(yard.VehicleCapacity(ModeId.Bus) == 8, "Stellplatz ohne Anschluss an den Fahrweg zählt nicht");
+yard.Modules.Remove(lonely);
+int leftSpot = yard.Modules.Where(m => m.Type == ModuleType.BusSpot).Min(m => m.X);
+var crossRoad = yard.Modules.First(m => m.Type == ModuleType.Road && m.Y == 7 && m.X == leftSpot + 1);
+yard.Modules.Remove(crossRoad);
+Check(yard.VehicleCapacity(ModeId.Bus) < 8, $"unterbrochener Fahrweg trennt Stellplätze ab ({yard.VehicleCapacity(ModeId.Bus)} übrig)");
+Check(yard.CanPlace(ModuleType.Office, yard.Width / 2 - 1, yard.Height - 3, 0) != null, "Einfahrt bleibt frei");
+var tramYard = DepotLayout.Starter(ModeId.Tram);
+Check(tramYard.VehicleCapacity(ModeId.Tram) == 4, $"Tram-Start-Layout: {tramYard.VehicleCapacity(ModeId.Tram)} Abstellgleise");
+var big = DepotLayout.Starter(ModeId.Bus, minVehicles: 14, minDrivers: 40);
+Check(big.VehicleCapacity(ModeId.Bus) >= 14 && big.DriverCapacity() >= 40, "altes Spielstand-Layout passt sich an Fahrzeuge und Fahrer an");
+
+var yardGame = new Game(map, sandbox: true, seed: 7);
+var yardDepot = yardGame.AddDepot(map.Graph.Snap(-200, -900, 300)!.Value)!;
+int bought = 0;
+while (yardGame.BuyVehicle(yardDepot.Id) != null && bought < 20) bought++;
+Check(bought == 8, $"Kauf endet bei vollem Hof ({bought} Busse)");
+Check(yardGame.PlaceModule(yardDepot, ModuleType.BusSpot, 1, 9, 1) == null, "zusätzlichen Stellplatz gebaut");
+Check(yardGame.RemoveModuleAt(yardDepot, crossRoad.X, crossRoad.Y) != null, "Fahrweg mit belegten Stellplätzen lässt sich nicht abreißen");
+var yardRestored = Game.Restore(map, SaveData.FromJson(yardGame.Serialize().ToJson()));
+Check(yardRestored.Depots[yardDepot.Id].Layout.Modules.Count == yardDepot.Layout.Modules.Count, "Layout wird gespeichert und geladen");
+
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

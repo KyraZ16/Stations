@@ -287,6 +287,11 @@ public sealed partial class Game
     public Vehicle? BuyVehicle(int depotId)
     {
         if (!Depots.TryGetValue(depotId, out var depot)) return null;
+        if (FreeSpots(depot) <= 0)
+        {
+            Notify($"{depot.Name} ist voll – baue weitere Stellplätze (Betriebshof bearbeiten)", true);
+            return null;
+        }
         var def = Modes.Get(depot.Mode).Vehicle;
         if (!Pay(def.Price)) return null;
         int id = _nextId++;
@@ -299,6 +304,47 @@ public sealed partial class Game
         Vehicles[id] = v;
         OnChange();
         return v;
+    }
+
+    /// <summary>Connected parking spots not taken by vehicles based at the depot.</summary>
+    public int FreeSpots(Depot d) => d.Layout.VehicleCapacity(d.Mode) - Vehicles.Values.Count(v => v.DepotId == d.Id);
+
+    // ---------------------------------------------------------------- depot yard
+
+    /// <summary>Place a module in a depot yard. Returns an error message or null.</summary>
+    public string? PlaceModule(Depot d, ModuleType type, int x, int y, int rot)
+    {
+        if (type == ModuleType.TramSpot && d.Mode != ModeId.Tram) return "Abstellgleise gibt es nur im Tram-Betriebshof";
+        if (type == ModuleType.BusSpot && d.Mode == ModeId.Tram) return "Im Tram-Betriebshof werden Abstellgleise gebaut";
+        if (d.Layout.CanPlace(type, x, y, rot) is string err) return err;
+        if (!Pay(DepotLayout.Def(type).Cost)) return "Nicht genug Geld";
+        d.Layout.Modules.Add(new PlacedModule { Type = type, X = x, Y = y, Rot = rot });
+        OnChange();
+        return null;
+    }
+
+    /// <summary>Remove the module at a cell. Refused if vehicles or drivers would lose their place.</summary>
+    public string? RemoveModuleAt(Depot d, int x, int y)
+    {
+        var m = d.Layout.ModuleAt(x, y);
+        if (m == null) return null;
+        int capBefore = d.Layout.VehicleCapacity(d.Mode);
+        d.Layout.Modules.Remove(m);
+        int vehicles = Vehicles.Values.Count(v => v.DepotId == d.Id);
+        int capAfter = d.Layout.VehicleCapacity(d.Mode);
+        // Only refuse if this removal takes away a spot that is needed (older saves may already be over capacity).
+        if (capAfter < capBefore && capAfter < vehicles)
+        {
+            d.Layout.Modules.Add(m);
+            return "Dann hätten nicht mehr alle Fahrzeuge einen Stellplatz";
+        }
+        if (d.Layout.DriverCapacity() < DriversOf(d.Id).Count)
+        {
+            d.Layout.Modules.Add(m);
+            return "Dann hätten nicht mehr alle Fahrer Platz";
+        }
+        OnChange();
+        return null;
     }
 
     public void SellVehicle(int id)
@@ -357,7 +403,8 @@ public sealed partial class Game
             AssignVehicle(idle.Id, line.Id);
             return;
         }
-        var depot = Depots.Values.Where(d => d.Mode == line.Mode).OrderBy(Dist).FirstOrDefault();
+        var candidates = Depots.Values.Where(d => d.Mode == line.Mode).OrderBy(Dist).ToList();
+        var depot = candidates.FirstOrDefault(d => FreeSpots(d) > 0) ?? candidates.FirstOrDefault();
         if (depot == null)
         {
             Notify(line.Mode == ModeId.Tram ? "Baue zuerst einen Tram-Betriebshof an den Gleisen" : "Baue zuerst einen Betriebshof", true);

@@ -47,6 +47,10 @@ public partial class Interaction : Node
     /// <summary>Tool, mode, selection or draft changed: toolbar, panel and hint should update.</summary>
     public event Action? StateChanged;
     public event Action<string, bool>? Notify;
+    /// <summary>The player wants to open the 3D yard editor of a depot.</summary>
+    public event Action<int>? EditDepotRequested;
+    public void EditDepot(int depotId) => EditDepotRequested?.Invoke(depotId);
+
     /// <summary>Ask the player to confirm a destructive action.</summary>
     public event Action<string, Action>? ConfirmRequested;
 

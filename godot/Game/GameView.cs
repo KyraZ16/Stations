@@ -23,6 +23,8 @@ public partial class GameView : Node
     private ConfirmationDialog _confirm = null!;
     private Action? _onConfirm;
     private double _autosave;
+    private CanvasLayer _uiLayer = null!;
+    private DepotView.DepotEditor? _depotEditor;
 
     /// <summary>Tool state (for developer automation).</summary>
     public Interaction Interaction => _ui;
@@ -39,8 +41,10 @@ public partial class GameView : Node
         _ui.Notify += Toast;
         _ui.ConfirmRequested += Confirm;
         _ui.StateChanged += OnStateChanged;
+        _ui.EditDepotRequested += OpenDepotEditor;
 
         var layer = new CanvasLayer();
+        _uiLayer = layer;
         AddChild(layer);
         // One root control carries the theme; it lets mouse events through to the map.
         var ui = new Control { Theme = Ui.Theme, MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -106,6 +110,29 @@ public partial class GameView : Node
         _onConfirm = yes;
         _confirm.DialogText = question;
         _confirm.PopupCentered(new Vector2I(420, 0));
+    }
+
+    /// <summary>Switch from the map to the 3D yard editor of a depot (the simulation keeps running).</summary>
+    public void OpenDepotEditor(int depotId)
+    {
+        if (_depotEditor != null || !Game.Depots.TryGetValue(depotId, out var depot)) return;
+        _map.Visible = false;
+        _uiLayer.Visible = false;
+        _ui.ProcessMode = ProcessModeEnum.Disabled; // no map shortcuts while editing
+        _depotEditor = new DepotView.DepotEditor { Game = Game, Depot = depot };
+        _depotEditor.Closed += CloseDepotEditor;
+        AddChild(_depotEditor);
+    }
+
+    private void CloseDepotEditor()
+    {
+        if (_depotEditor == null) return;
+        _depotEditor.QueueFree();
+        _depotEditor = null;
+        _map.Visible = true;
+        _uiLayer.Visible = true;
+        _ui.ProcessMode = ProcessModeEnum.Inherit;
+        _map.MakeCameraCurrent();
     }
 
     /// <summary>Zoom the map by a factor around its center (developer option).</summary>

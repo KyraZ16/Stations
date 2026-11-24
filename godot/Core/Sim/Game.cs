@@ -273,7 +273,11 @@ public sealed partial class Game
         int id = _nextId++;
         string street = StreetName(pos);
         string kind = mode == ModeId.Tram ? "Tram-Betriebshof" : "Betriebshof";
-        var depot = new Depot { Id = id, Mode = mode, Pos = pos, Name = street != "" ? $"{kind} {street}" : $"{kind} {id}" };
+        var depot = new Depot
+        {
+            Id = id, Mode = mode, Pos = pos, Name = street != "" ? $"{kind} {street}" : $"{kind} {id}",
+            Layout = DepotLayout.Starter(mode),
+        };
         Depots[id] = depot;
         OnChange();
         return depot;
@@ -297,7 +301,18 @@ public sealed partial class Game
 
     public void HireDrivers(int depotId, int n)
     {
-        if (!Depots.ContainsKey(depotId)) return;
+        if (!Depots.TryGetValue(depotId, out var depot)) return;
+        int free = depot.Layout.DriverCapacity() - DriversOf(depotId).Count;
+        if (free <= 0)
+        {
+            Notify("Kein Platz für weitere Fahrer – baue ein Sozialgebäude im Betriebshof", true);
+            return;
+        }
+        if (n > free)
+        {
+            Notify($"Nur noch Platz für {free} Fahrer – baue ein weiteres Sozialgebäude", true);
+            n = free;
+        }
         if (!Pay(DriverHireCost * n)) return;
         for (int i = 0; i < n; i++)
         {
@@ -363,7 +378,8 @@ public sealed partial class Game
         foreach (var d in Depots.Values.ToList())
         {
             if (depotId != null && d.Id != depotId) continue;
-            int missing = DriverDemand(d.Id) - DriversOf(d.Id).Count;
+            int have = DriversOf(d.Id).Count;
+            int missing = Math.Min(DriverDemand(d.Id) - have, d.Layout.DriverCapacity() - have);
             if (missing > 0 && CanAfford(missing * DriverHireCost))
             {
                 HireDrivers(d.Id, missing);

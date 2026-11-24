@@ -18,6 +18,8 @@ public sealed class Depot
     public string Name = "";
     public ModeId Mode;
     public RoadPos Pos;
+    /// <summary>Yard layout; its parking spots and offices limit vehicles and drivers.</summary>
+    public DepotLayout Layout = new();
 }
 
 /// <summary>One direction of a line: a path through an ordered list of stops.</summary>

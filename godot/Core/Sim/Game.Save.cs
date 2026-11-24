@@ -30,6 +30,8 @@ public sealed class SaveData
         public ModeId Mode { get; set; }
         public double X { get; set; }
         public double Y { get; set; }
+        /// <summary>Depot yard (depots only).</summary>
+        public DepotLayout? Layout { get; set; }
     }
 
     public sealed class LineDto
@@ -87,7 +89,7 @@ public sealed partial class Game
             NextId = _nextId,
             VehicleCounter = _vehicleCounter,
             Stops = Stops.Values.Select(s => new SaveData.PlacedDto { Id = s.Id, Name = s.Name, Mode = s.Mode, X = s.Pos.X, Y = s.Pos.Y }).ToList(),
-            Depots = Depots.Values.Select(d => new SaveData.PlacedDto { Id = d.Id, Name = d.Name, Mode = d.Mode, X = d.Pos.X, Y = d.Pos.Y }).ToList(),
+            Depots = Depots.Values.Select(d => new SaveData.PlacedDto { Id = d.Id, Name = d.Name, Mode = d.Mode, X = d.Pos.X, Y = d.Pos.Y, Layout = d.Layout }).ToList(),
             Lines = Lines.Values.Select(l => new SaveData.LineDto
             {
                 Id = l.Id, Name = l.Name, Color = l.Color, Mode = l.Mode, StopIds = l.StopIds.ToList(), Circular = l.Circular,
@@ -127,7 +129,14 @@ public sealed partial class Game
         foreach (var d in data.Depots)
         {
             if (g.SnapFor(d.Mode, d.X, d.Y, 60) is RoadPos pos)
-                g.Depots[d.Id] = new Depot { Id = d.Id, Name = d.Name, Mode = d.Mode, Pos = pos };
+                g.Depots[d.Id] = new Depot
+                {
+                    Id = d.Id, Name = d.Name, Mode = d.Mode, Pos = pos,
+                    // Saves from before the yard editor get a yard that fits their vehicles and drivers
+                    Layout = d.Layout ?? DepotLayout.Starter(d.Mode,
+                        data.Vehicles.Count(v => v.DepotId == d.Id),
+                        data.Drivers?.Count(x => x.DepotId == d.Id) ?? (int)Math.Ceiling(data.Vehicles.Count(v => v.DepotId == d.Id) * 1.6)),
+                };
         }
         foreach (var l in data.Lines)
         {

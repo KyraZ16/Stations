@@ -70,6 +70,8 @@ public partial class MapView : Node2D
 
     public void ZoomBy(float factor) => SetZoom(_cam.Zoom.X * factor);
 
+    public void MakeCameraCurrent() => _cam.MakeCurrent();
+
     private Vector2 ClampToMap(Vector2 p)
     {
         float h = (float)Game.Map.Half;

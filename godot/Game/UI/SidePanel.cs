@@ -583,12 +583,15 @@ public partial class SidePanel : PanelContainer
         NameField(d.Name, n => { d.Name = n; _dirty = true; });
         var vs = G.Vehicles.Values.Where(v => v.DepotId == d.Id).OrderBy(v => v.Id).ToList();
         var kv = new Ui.KeyValues(_box);
-        kv.Add("Fahrzeuge", vs.Count.ToString());
+        var spots = kv.Add(d.Mode == ModeId.Tram ? "Abstellgleise (belegt)" : "Stellplätze (belegt)", $"{vs.Count} / {d.Layout.VehicleCapacity(d.Mode)}");
+        if (vs.Count >= d.Layout.VehicleCapacity(d.Mode)) spots.AddThemeColorOverride("font_color", Ui.Danger);
         Bind(kv.Add("Davon im Hof"), () => vs.Count(v => v.State == VehicleState.Depot).ToString());
+        kv.Add("Fahrerplätze", $"{G.DriversOf(d.Id).Count} / {d.Layout.DriverCapacity()}");
+        Actions().AddChild(Ui.Btn("Betriebshof bearbeiten (3D)", () => UI.EditDepot(d.Id)));
         Actions().AddChild(Ui.Btn($"+ {def.Name} kaufen ({Util.Money(def.Price)})", () =>
         {
             if (G.BuyVehicle(d.Id) is Vehicle nv) Toast($"{nv.Name} gekauft");
-        }, primary: true, disabled: !G.CanAfford(def.Price)));
+        }, primary: true, disabled: !G.CanAfford(def.Price) || G.FreeSpots(d) <= 0));
 
         // Staff
         Space();
