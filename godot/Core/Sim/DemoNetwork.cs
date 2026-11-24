@@ -44,4 +44,21 @@ public static class DemoNetwork
         foreach (var l in lines) if (l != null) game.AssignMissing(l);
         game.HireMissingDrivers();
     }
+
+    /// <summary>Sample U-Bahn (dev shortcut): a tunnel across the center with a branch to the depot, line U1.</summary>
+    public static TransitLine? BuildMetro(Game game)
+    {
+        game.BuildTunnel((-1800, -800), (-500, -700));
+        game.BuildTunnel((-500, -700), (400, -250));
+        game.BuildTunnel((400, -250), (1300, 300));
+        game.BuildTunnel((-500, -700), (-500, -1150));
+        var ids = new List<int>();
+        foreach (var (x, y) in new[] { (-1700.0, -790.0), (-1050, -745), (-500, -700), (0, -450), (400, -250), (850, 25), (1250, 270) })
+            if (game.SnapFor(ModeId.Metro, x, y, 80) is RoadPos p && game.AddStop(p, ModeId.Metro) is Stop st) ids.Add(st.Id);
+        if (game.SnapFor(ModeId.Metro, -500, -1050, 80) is RoadPos dp) game.AddDepot(dp, ModeId.Metro);
+        var line = game.CreateLine(ids, false, ModeId.Metro);
+        if (line != null) game.AssignMissing(line);
+        game.HireMissingDrivers();
+        return line;
+    }
 }

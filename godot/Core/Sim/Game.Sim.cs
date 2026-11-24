@@ -404,7 +404,9 @@ public sealed partial class Game
         v.State = VehicleState.Dwell;
         v.V = 0;
         // Paying passengers take longer to board, depending on how they can pay (see research)
-        v.DwellUntil = Time + (k == 0 ? 12 : 7) + (moves - paying) * 1.2 + paying * BoardSeconds;
+        v.DwellUntil = IsMetro(v.Mode)
+            ? Time + (k == 0 ? 15 : 20) + moves * 0.3 // many doors, tickets from the station machines
+            : Time + (k == 0 ? 12 : 7) + (moves - paying) * 1.2 + paying * BoardSeconds;
     }
 
     // ---------------------------------------------------------------- wear and maintenance

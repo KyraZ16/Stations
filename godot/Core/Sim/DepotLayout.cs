@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Stations.Core.Sim;
 
-public enum ModuleType { Road, BusSpot, TramSpot, Office, Workshop, Wash, LongBusSpot, Charger, ServiceCenter, PlanningOffice }
+public enum ModuleType { Road, BusSpot, TramSpot, Office, Workshop, Wash, LongBusSpot, Charger, ServiceCenter, PlanningOffice, MetroSpot }
 
 public sealed record ModuleDef(
     ModuleType Type,
@@ -56,6 +56,7 @@ public sealed partial class DepotLayout
     {
         [ModuleType.Road] = new(ModuleType.Road, "Fahrweg", 1, 1, 2_000, 0.05, "4a4f56", "Verbindet Stellplätze und Gebäude mit der Einfahrt"),
         [ModuleType.BusSpot] = new(ModuleType.BusSpot, "Busstellplatz", 1, 5, 10_000, 0.04, "8d9096", "+1 Bus (Stirnseite muss am Fahrweg liegen)"),
+        [ModuleType.MetroSpot] = new(ModuleType.MetroSpot, "U-Bahn-Abstellgleis", 1, 14, 400_000, 0.06, "a9a39a", "+1 U-Bahn-Zug bis 42 m (Stirnseite muss am Gleis liegen)"),
         [ModuleType.TramSpot] = new(ModuleType.TramSpot, "Abstellgleis", 1, 12, 60_000, 0.06, "b8ada0", "+1 Tram (Stirnseite muss am Gleis liegen)"),
         [ModuleType.LongBusSpot] = new(ModuleType.LongBusSpot, "Gelenkbus-Stellplatz", 1, 7, 14_000, 0.04, "7f8794", "+1 Bus bis 21 m, auch Gelenkbusse"),
         [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 153_000, 7, "d9cbb0", $"Frei aufziehbar (ab 2×2): {StaffPerCell} Mitarbeiter je Feld (3×3 = {DriversPerOffice}), Umkleide und Pausenraum wachsen mit"),
@@ -195,10 +196,21 @@ public sealed partial class DepotLayout
         return access.Any(reach.Contains);
     }
 
-    public static bool IsSpot(ModuleType t) => t is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot;
+    public static bool IsSpot(ModuleType t) => t is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot or ModuleType.MetroSpot;
+
+    /// <summary>Parking spot type of a mode's depot.</summary>
+    public static ModuleType SpotType(ModeId mode) => mode switch
+    {
+        ModeId.Tram => ModuleType.TramSpot, ModeId.Metro => ModuleType.MetroSpot, _ => ModuleType.BusSpot,
+    };
 
     private static bool SpotFor(ModuleType t, ModeId mode) =>
-        mode == ModeId.Tram ? t == ModuleType.TramSpot : t is ModuleType.BusSpot or ModuleType.LongBusSpot;
+        mode switch
+        {
+            ModeId.Tram => t == ModuleType.TramSpot,
+            ModeId.Metro => t == ModuleType.MetroSpot,
+            _ => t is ModuleType.BusSpot or ModuleType.LongBusSpot,
+        };
 
     /// <summary>Usable length of a parking spot in meters.</summary>
     public static double SpotLength(PlacedModule m) => Def(m.Type).H * CellSize;
@@ -330,8 +342,9 @@ public sealed partial class DepotLayout
     {
         var l = new DepotLayout();
         if (mode == ModeId.Tram) l.Height = 20;
+        if (mode == ModeId.Metro) l.Height = 22;
         int cx = l.Width / 2;
-        int crossY = mode == ModeId.Tram ? 13 : 7;
+        int crossY = mode switch { ModeId.Tram => 13, ModeId.Metro => 15, _ => 7 };
         void Road(int x, int y)
         {
             if (l.ModuleAt(x, y) == null) l.Modules.Add(new PlacedModule { Type = ModuleType.Road, X = x, Y = y });
@@ -339,7 +352,7 @@ public sealed partial class DepotLayout
         for (int y = crossY; y < l.Height; y++) { Road(cx - 1, y); Road(cx, y); }
         for (int x = 1; x < l.Width - 1; x++) Road(x, crossY);
 
-        var spotType = mode == ModeId.Tram ? ModuleType.TramSpot : ModuleType.BusSpot;
+        var spotType = SpotType(mode);
         int len = Def(spotType).H;
         // Candidate spots: above the cross road, left and right of the driveway, outwards from the middle
         var candidates = new List<int>();
@@ -348,7 +361,7 @@ public sealed partial class DepotLayout
             candidates.Add(cx - 2 - k);
             candidates.Add(cx + 1 + k);
         }
-        int wanted = Math.Max(mode == ModeId.Tram ? 4 : 8, minVehicles);
+        int wanted = Math.Max(mode == ModeId.Bus ? 8 : 4, minVehicles);
         int placed = 0;
         foreach (int x in candidates)
         {

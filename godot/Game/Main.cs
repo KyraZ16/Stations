@@ -48,6 +48,12 @@ public partial class Main : Node
             DemoNetwork.Build(game);
             game.Advance(3 * 3600); // 05:00 → 08:00, morning peak
         }
+        if (_dev.ContainsKey("metro"))
+        {
+            DemoNetwork.BuildMetro(game);
+            _view!.Interaction.SetTier(Core.Tier.City);
+            game.Advance(1800);
+        }
         if (_dev.ContainsKey("tooltest")) ToolTest(game, _view!.Interaction);
         if (_dev.TryGetValue("depot", out var dmode) && game.Depots.Count > 0)
         {
@@ -87,6 +93,7 @@ public partial class Main : Node
         if (_dev.ContainsKey("depot") && game.Depots.Count > 0)
         {
             if (_dev["depot"] == "tram") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.Tram).Id);
+            else if (_dev["depot"] == "metro") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.Metro).Id);
             else _view!.OpenDepotEditor(game.Depots.Values.First().Id);
             float? camDist = _dev.TryGetValue("camdist", out var cd) && float.TryParse(cd, System.Globalization.CultureInfo.InvariantCulture, out float cdv) ? cdv : null;
             float? camYaw = _dev.TryGetValue("camyaw", out var cy) && float.TryParse(cy, System.Globalization.CultureInfo.InvariantCulture, out float cyv) ? cyv : null;

@@ -23,6 +23,7 @@ Nach `--` auf der Kommandozeile, z. B.
 `Godot_v4.7.2-stable_mono_win64.exe --path godot/Game -- --autostart --demo`:
 
 - `--autostart` startet direkt Hamburg (Sandbox)
+- `--metro` baut zusätzlich eine Beispiel-U-Bahn (U1) und wechselt auf „Stadtweit“; `--depot=metro` öffnet ihren Betriebshof
 - `--demo` baut ein Beispielnetz und spult auf 08:00 (im Spiel auch per **F9**)
 - `--zoom=3` zoomt hinein, `--shot=bild.png` speichert einen Screenshot und beendet das Spiel
 - `--tooltest=line|timetable|depot|vehicle|stop|track|draft` baut über die Werkzeuge ein kleines Netz und öffnet das genannte Panel
@@ -47,4 +48,5 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] Gebäude frei aufziehen: Sozialgebäude, Werkstatt und Waschanlage als Rechteck beliebiger Größe (Klick = Standardgröße); Preis nach Fläche; Sozialgebäude 3 Mitarbeiterplätze je Feld, Pausenraum, Spinde und Dispo wachsen mit; Werkstatt und Waschanlage je 2 Felder Breite eine Spur (mit Hebebühnen bzw. Bürsten und eigenem Personal)
 - [x] Kundencenter (frei aufziehbar, 06–22 Uhr): Kunden kommen von der Straße, warten auf Stühlen oder stehen, werden an Schaltern von Servicekräften (Früh-/Spätschicht) bedient und kaufen Abos (49 € sofort, für etwa einen Monat bis zu +25 % Fahrgäste); ohne freien Schalter gehen sie nach 20 Minuten wieder
 - [x] Forschung: Punkte aus dem Betrieb (2 je 100 Einstiege, 0,5 je Kunde im Kundencenter) starten Projekte, die dann Forscher-Stunden brauchen; Forscher sitzen im frei aufziehbaren Planungsbüro (Früh-/Spätschicht), mehr Forscher = schneller fertig. Bezahlstufen 1–4 (Bargeld beim Fahrer → Karte am Automaten → kontaktlos am Automaten + Automat im Fahrzeug → kontaktlos im Fahrzeug) beschleunigen den Einstieg und bringen bis zu +10 % Fahrgäste; außerdem Werkstatt-Diagnose, Reinigungsplan, Abo-Marketing. Gelenkbus (mit Gelenkbus-Stellplatz), Ladestation und E-Bus werden erst erforscht (gesperrt mit 🔒; alte Spielstände behalten, was sie schon nutzen). Knopf „Forschung“ in der Kopfleiste
-- [ ] U-Bahn, Kampagne
+- [x] U-Bahn (Stadtweit): Tunnel frei durch die Stadt bauen (G, gerade Stücke von Punkt zu Punkt, Andocken an bestehende Tunnel, 30.000 €/m), U-Bahnhöfe (H, 800 m Einzugsgebiet, mindestens 250 m Abstand) und U-Bahn-Betriebshof (B) auf Tunneln, Linien U1, U2 …; Züge (40 m, 330 Plätze, 80 km/h) mit schnellem Einstieg an allen Türen; Umstieg zu Bus und Tram zu Fuß; 3D-Hof mit 42-m-Abstellgleisen
+- [ ] S-Bahn, Regionalzüge, Kampagne

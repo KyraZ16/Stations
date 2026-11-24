@@ -57,15 +57,14 @@ public partial class CoverageLayer : Node2D
         var served = Game.Lines.Values.Where(l => double.IsFinite(Game.Headway(l)))
             .SelectMany(l => l.StopIds).Distinct()
             .Select(id => Game.Stops.TryGetValue(id, out var s) ? s : null).OfType<Stop>()
-            .Select(s => (s.Pos.X, s.Pos.Y)).ToArray();
-        double r2 = Router.AccessRadius * Router.AccessRadius;
+            .Select(s => (s.Pos.X, s.Pos.Y, R: s.Mode == Core.ModeId.Metro ? Router.MetroAccessRadius : Router.AccessRadius)).ToArray();
         foreach (var (start, count, b) in _ranges)
         {
             bool ok = false;
-            foreach (var (x, y) in served)
+            foreach (var (x, y, rr) in served)
             {
                 double dx = x - b.Cx, dy = y - b.Cy;
-                if (dx * dx + dy * dy < r2) { ok = true; break; }
+                if (dx * dx + dy * dy < rr * rr) { ok = true; break; }
             }
             var c = ok ? Covered : Uncovered;
             for (int i = 0; i < count; i++) _cols[start + i] = c;

@@ -84,7 +84,7 @@ public partial class DepotEditor : Node3D
 
         BuildUi();
         UpdateDayNight();
-        if (Depot.Mode == ModeId.Tram) _tool = ModuleType.Road;
+        if (Depot.Mode != ModeId.Bus) _tool = ModuleType.Road;
         RebuildModules();
         RebuildVehicles();
         Game.Changed += OnGameChanged;
@@ -297,11 +297,11 @@ public partial class DepotEditor : Node3D
                 case ModuleType.Road:
                     AddBox(node, ground + new Vector3(0, 0.03f, 0), new Vector3(Cell, 0.06f, Cell), ok ? Asphalt : warn, shadow: false);
                     break;
-                case ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot:
+                case ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot or ModuleType.MetroSpot:
                 {
                     AddBox(node, ground + new Vector3(0, 0.025f, 0), new Vector3(fp.X, 0.05f, fp.Z), ok ? Asphalt : warn, shadow: false);
                     var lineSize = vertical ? new Vector3(0.14f, 0.06f, fp.Z - 0.4f) : new Vector3(fp.X - 0.4f, 0.06f, 0.14f);
-                    if (m.Type == ModuleType.TramSpot)
+                    if (m.Type is ModuleType.TramSpot or ModuleType.MetroSpot)
                     {
                         // two rails on sleepers
                         var railOff = vertical ? new Vector3(0.72f, 0.12f, 0) : new Vector3(0, 0.12f, 0.72f);
@@ -857,8 +857,8 @@ public partial class DepotEditor : Node3D
     {
         foreach (var c in _palette.GetChildren()) c.QueueFree();
         _palette.AddChild(Ui.Section("Bauen"));
-        var types = Depot.Mode == ModeId.Tram
-            ? new List<ModuleType> { ModuleType.Road, ModuleType.TramSpot, ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter, ModuleType.PlanningOffice }
+        var types = Depot.Mode != ModeId.Bus
+            ? new List<ModuleType> { ModuleType.Road, DepotLayout.SpotType(Depot.Mode), ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter, ModuleType.PlanningOffice }
             : new List<ModuleType> { ModuleType.Road, ModuleType.BusSpot, ModuleType.LongBusSpot, ModuleType.Charger,
                 ModuleType.Office, ModuleType.Workshop, ModuleType.Wash, ModuleType.ServiceCenter, ModuleType.PlanningOffice };
         foreach (var t in types)
@@ -925,7 +925,7 @@ public partial class DepotEditor : Node3D
         int staff = Game.StaffCount(Depot.Id);
         int mech = Game.WorkersOf(Depot.Id, StaffRole.Mechanic).Count, clean = Game.WorkersOf(Depot.Id, StaffRole.Cleaner).Count;
         int svc = Game.WorkersOf(Depot.Id, StaffRole.Service).Count, res = Game.WorkersOf(Depot.Id, StaffRole.Researcher).Count;
-        string spot = Depot.Mode == ModeId.Tram ? "Abstellgleise" : "Stellplätze";
+        string spot = Depot.Mode != ModeId.Bus ? "Abstellgleise" : "Stellplätze";
         string service = $"Werkstatt: {Depot.Repairing}   ·   Wäsche: {Depot.Washing}" + (Depot.Chargers > 0 ? $"   ·   Laden: {Depot.Charging}" : "");
         _stats.Text = $"{spot}: {vehicles} / {L.VehicleCapacity(Depot.Mode)} belegt ({home} im Hof)   ·   " +
                       $"Personal: {staff} / {L.DriverCapacity()} ({drivers} Fahrer, {mech} Mechaniker, {clean} Reinigung, {svc} Service, {res} Forschung; {Depot.OnSite} vor Ort)   ·   {service}" +

@@ -65,12 +65,13 @@ public sealed partial class Game
             return null;
         }
         var used = Lines.Values.Select(l => l.Name).ToHashSet();
+        string prefix = IsMetro(mode) ? "U" : "";
         int n = 1;
-        while (used.Contains(n.ToString())) n++;
+        while (used.Contains(prefix + n)) n++;
         int id = _nextId++;
         var line = new TransitLine
         {
-            Id = id, Name = n.ToString(), Mode = mode, StopIds = stopIds.ToList(), Circular = circular, Runs = runs,
+            Id = id, Name = prefix + n, Mode = mode, StopIds = stopIds.ToList(), Circular = circular, Runs = runs,
             CycleTime = CycleTime(runs), Color = Util.LineColors[Lines.Count % Util.LineColors.Length],
         };
         Lines[id] = line;
@@ -331,9 +332,9 @@ public sealed partial class Game
     public string? PlaceModule(Depot d, ModuleType type, int x, int y, int rot, int w = 0, int h = 0)
     {
         if (!DepotLayout.IsDrawable(type)) w = h = 0;
-        if (type == ModuleType.TramSpot && d.Mode != ModeId.Tram) return "Abstellgleise gibt es nur im Tram-Betriebshof";
-        if (type is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.Charger && d.Mode == ModeId.Tram)
-            return "Im Tram-Betriebshof werden Abstellgleise gebaut";
+        if (DepotLayout.IsSpot(type) && type != DepotLayout.SpotType(d.Mode) && !(type == ModuleType.LongBusSpot && d.Mode == ModeId.Bus))
+            return d.Mode == ModeId.Bus ? "Im Bus-Betriebshof werden Busstellplätze gebaut" : $"Hier passt nur „{DepotLayout.Def(DepotLayout.SpotType(d.Mode)).Name}“";
+        if (type == ModuleType.Charger && d.Mode != ModeId.Bus) return "Ladestationen gibt es nur für E-Busse";
         if (ResearchTree.ForModule(type) is string need && !Has(need)) return NeedsResearch(need);
         if (d.Layout.CanPlace(type, x, y, rot, w, h) is string err) return err;
         if (!Pay(DepotLayout.Cost(type, w, h))) return "Nicht genug Geld";
@@ -432,7 +433,12 @@ public sealed partial class Game
         var depot = candidates.FirstOrDefault(d => CanHouse(d, def)) ?? candidates.FirstOrDefault();
         if (depot == null)
         {
-            Notify(line.Mode == ModeId.Tram ? "Baue zuerst einen Tram-Betriebshof an den Gleisen" : "Baue zuerst einen Betriebshof", true);
+            Notify(line.Mode switch
+            {
+                ModeId.Tram => "Baue zuerst einen Tram-Betriebshof an den Gleisen",
+                ModeId.Metro => "Baue zuerst einen U-Bahn-Betriebshof an einem Tunnel",
+                _ => "Baue zuerst einen Betriebshof",
+            }, true);
             return;
         }
         var nv = BuyVehicle(depot.Id, def.Id);

@@ -1,5 +1,6 @@
 using Godot;
 using Stations.Core;
+using Stations.Core.Sim;
 
 namespace Stations.UI;
 
@@ -56,8 +57,9 @@ public partial class ToolBar : PanelContainer
         _box.AddChild(Ui.Section("Werkzeuge"));
         foreach (var t in Interaction.Tools)
         {
-            if (t.TracksOnly && !UI.ModeUsesTracks) continue;
-            var b = Toggle($"{t.Icon}   {t.Name}", UI.Tool == t.Tool, () => UI.SetTool(t.Tool));
+            if (t.TracksOnly && !UI.ModeBuildsInfra) continue;
+            string name = t.Tool == Tool.Track ? UI.InfraToolName : t.Tool == Tool.Stop && Game.IsMetro(UI.Mode) ? "U-Bahnhof" : t.Name;
+            var b = Toggle($"{t.Icon}   {name}", UI.Tool == t.Tool, () => UI.SetTool(t.Tool));
             b.Alignment = HorizontalAlignment.Left;
             b.TooltipText = $"Taste {t.Key}";
             _box.AddChild(b);

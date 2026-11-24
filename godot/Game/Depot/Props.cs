@@ -115,7 +115,12 @@ public sealed class Props
     public Node3D Vehicle(VehicleDef def, ModeId mode, string color, out List<Node3D> wheels)
     {
         wheels = new List<Node3D>();
-        return mode == ModeId.Tram ? Tram(def, color, wheels) : Bus(def, color, wheels);
+        return mode switch
+        {
+            ModeId.Tram => Tram(def, color, wheels),
+            ModeId.Metro => Tram(def, color, wheels, metro: true),
+            _ => Bus(def, color, wheels),
+        };
     }
 
     private Node3D Bus(VehicleDef def, string color, List<Node3D> wheels)
@@ -186,13 +191,14 @@ public sealed class Props
         return n;
     }
 
-    private Node3D Tram(VehicleDef def, string color, List<Node3D> wheels)
+    /// <summary>Tram (three sections, pantograph) or U-Bahn train (two cars, power from the third rail).</summary>
+    private Node3D Tram(VehicleDef def, string color, List<Node3D> wheels, bool metro = false)
     {
         float L = (float)def.Length, W = (float)def.Width, floor = 0.35f;
         var n = new Node3D();
         var paint = Paint(color);
         var white = Paint("f2f2ee");
-        int sections = 3;
+        int sections = metro ? 2 : 3;
         float gap = 0.5f, seg = (L - gap * (sections - 1)) / sections;
         for (int s = 0; s < sections; s++)
         {
@@ -225,6 +231,13 @@ public sealed class Props
             Box(n, new Vector3(dir * (L / 2 + 0.04f), floor + 2.95f, 0), new Vector3(0.05f, 0.28f, W * 0.65f), Display);
             foreach (float z in new[] { -W / 2 + 0.35f, W / 2 - 0.35f })
                 Box(n, new Vector3(dir * (L / 2 + 0.04f), floor + 0.6f, z), new Vector3(0.05f, 0.22f, 0.35f), dir > 0 ? Headlight : Taillight, shadow: false);
+        }
+        if (metro)
+        {
+            // current collector shoes at the side instead of a pantograph
+            foreach (float x in new[] { -L / 4, L / 4 })
+                Box(n, new Vector3(x, 0.25f, W / 2 + 0.05f), new Vector3(0.6f, 0.1f, 0.12f), DarkSteel, shadow: false);
+            return n;
         }
         // Pantograph on the middle section
         float top = floor + 3.2f;

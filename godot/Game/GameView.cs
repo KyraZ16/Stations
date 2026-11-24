@@ -103,7 +103,7 @@ public partial class GameView : Node
 
     private void OnStateChanged()
     {
-        _hint.Text = Interaction.Hint(_ui.Tool);
+        _hint.Text = Interaction.Hint(_ui.Tool, _ui.Mode);
         _map.CoverageVisible = _ui.Coverage;
     }
 

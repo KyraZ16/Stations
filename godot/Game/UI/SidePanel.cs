@@ -358,9 +358,14 @@ public partial class SidePanel : PanelContainer
     {
         var w = new List<string>();
         if (!G.Depots.Values.Any(d => d.Mode == l.Mode))
-            w.Add(l.Mode == ModeId.Tram ? "Kein Tram-Betriebshof – baue einen an den Gleisen" : "Kein Betriebshof – baue einen, um Busse einzusetzen");
+            w.Add(l.Mode switch
+            {
+                ModeId.Tram => "Kein Tram-Betriebshof – baue einen an den Gleisen",
+                ModeId.Metro => "Kein U-Bahn-Betriebshof – baue einen an einem Tunnel",
+                _ => "Kein Betriebshof – baue einen, um Busse einzusetzen",
+            });
         int missing = G.PeakVehicles(l) - G.VehiclesOf(l).Count;
-        var word = l.Mode == ModeId.Tram ? ("Tram fehlt", "Trams fehlen") : ("Bus fehlt", "Busse fehlen");
+        var word = l.Mode switch { ModeId.Tram => ("Tram fehlt", "Trams fehlen"), ModeId.Metro => ("Zug fehlt", "Züge fehlen"), _ => ("Bus fehlt", "Busse fehlen") };
         if (missing > 0) w.Add($"{missing} {(missing == 1 ? word.Item1 : word.Item2)} für den Fahrplan");
         if (l.DriverShortage) w.Add("Fahrermangel – Fahrzeuge bleiben im Betriebshof");
         if (l.MaintenanceShortage) w.Add("Nicht genug einsatzbereite Fahrzeuge (Werkstatt oder Laden)");
@@ -411,6 +416,11 @@ public partial class SidePanel : PanelContainer
 
     private void TrackPanel()
     {
+        if (Game.IsMetro(UI.Mode))
+        {
+            TunnelPanel();
+            return;
+        }
         Header("Gleise bauen", closable: false);
         Hint("Gleise liegen auf Straßen und können in beide Richtungen befahren werden. Klicke einen Startpunkt, dann weitere Punkte – das Gleis folgt dem kürzesten Straßenweg.");
         var kv = new Ui.KeyValues(_box);
@@ -425,6 +435,27 @@ public partial class SidePanel : PanelContainer
         }
         Hint(UI.TrackStart != null ? "Klicke den nächsten Punkt. Rechtsklick oder Esc setzt neu an." : "Klicke auf eine Straße, um zu beginnen.");
         Hint("Danach: Tram-Haltestellen (H) und einen Tram-Betriebshof (B) auf die Gleise setzen, dann eine Linie (L) zeichnen.");
+    }
+
+    private void TunnelPanel()
+    {
+        Header("Tunnel bauen", closable: false);
+        Hint("U-Bahn-Tunnel verlaufen gerade von Punkt zu Punkt, unabhängig von Straßen und Wasser. Klickst du auf einen bestehenden Tunnel, " +
+             "wird er dort verbunden; Tunnel, die sich nur kreuzen, liegen in verschiedenen Tiefen.");
+        var kv = new Ui.KeyValues(_box);
+        kv.Add("Kosten", $"{Util.Money(Modes.Get(ModeId.Metro).TrackCostPerM * 1000)}/km");
+        kv.Add("Tunnelnetz gesamt", Util.Dist(G.TunnelLength));
+        kv.Add("U-Bahnhof / Betriebshof", $"{Util.Money(Modes.Get(ModeId.Metro).StopCost)} / {Util.Money(Modes.Get(ModeId.Metro).DepotCost)}");
+        if (UI.TunnelStart != null)
+        {
+            var plan = UI.TunnelPlan;
+            kv.Add("Geplant", plan == null ? "–" : Util.Dist(plan.Length));
+            var cost = kv.Add("Baukosten", plan == null ? "–" : Util.Money(plan.Cost));
+            if (plan != null && !G.CanAfford(plan.Cost)) cost.AddThemeColorOverride("font_color", Ui.Danger);
+        }
+        Hint(UI.TunnelStart != null ? "Klicke den nächsten Punkt. Rechtsklick oder Esc setzt neu an." : "Klicke den ersten Punkt (gern an einem bestehenden Tunnel).");
+        Hint("Danach: U-Bahnhöfe (H) und einen U-Bahn-Betriebshof (B) auf die Tunnel setzen, dann eine Linie (L) zeichnen. " +
+             $"U-Bahnhöfe erschließen {Router.MetroAccessRadius:F0} m im Umkreis.");
     }
 
     private void EditPanel(TransitLine l)
@@ -466,7 +497,7 @@ public partial class SidePanel : PanelContainer
 
     private void StopPanel(Stop s)
     {
-        Header(s.Mode == ModeId.Tram ? "Tram-Haltestelle" : "Haltestelle");
+        Header(s.Mode switch { ModeId.Tram => "Tram-Haltestelle", ModeId.Metro => "U-Bahnhof", _ => "Haltestelle" });
         NameField(s.Name, v => s.Name = v);
         var kv = new Ui.KeyValues(_box);
         Bind(kv.Add("Wartende Fahrgäste"), () => s.Waiting.Count.ToString());
@@ -729,12 +760,12 @@ public partial class SidePanel : PanelContainer
 
     private void DepotPanel(Depot d)
     {
-        Header(d.Mode == ModeId.Tram ? "Tram-Betriebshof" : "Betriebshof");
+        Header(d.Mode switch { ModeId.Tram => "Tram-Betriebshof", ModeId.Metro => "U-Bahn-Betriebshof", _ => "Betriebshof" });
         foreach (var w in DepotWarnings(d)) Warn(w);
         NameField(d.Name, n => { d.Name = n; _dirty = true; });
         var vs = G.Vehicles.Values.Where(v => v.DepotId == d.Id).OrderBy(v => v.Id).ToList();
         var kv = new Ui.KeyValues(_box);
-        var spots = kv.Add(d.Mode == ModeId.Tram ? "Abstellgleise (belegt)" : "Stellplätze (belegt)", $"{vs.Count} / {d.Layout.VehicleCapacity(d.Mode)}");
+        var spots = kv.Add(d.Mode != ModeId.Bus ? "Abstellgleise (belegt)" : "Stellplätze (belegt)", $"{vs.Count} / {d.Layout.VehicleCapacity(d.Mode)}");
         if (vs.Count >= d.Layout.VehicleCapacity(d.Mode)) spots.AddThemeColorOverride("font_color", Ui.Danger);
         Bind(kv.Add("Davon im Hof"), () => vs.Count(Game.InYard).ToString());
         kv.Add("Mitarbeiterplätze", $"{G.StaffCount(d.Id)} / {d.Layout.DriverCapacity()}");

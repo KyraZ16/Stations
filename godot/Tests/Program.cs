@@ -379,5 +379,32 @@ fast.G.StartResearch("pay3");
 var rRestored = Game.Restore(map, SaveData.FromJson(fast.G.Serialize().ToJson()));
 Check(rRestored.Has("pay2") && rRestored.ActiveResearch == "pay3" && Math.Abs(rRestored.Points - fast.G.Points) < 1e-6, "Forschungsstand wird gespeichert");
 
+Console.WriteLine("== U-Bahn");
+var mg = new Game(map, sandbox: true, seed: 31);
+Check(mg.SnapFor(ModeId.Metro, -1200, -600, 50) == null, "ohne Tunnel keine U-Bahnhöfe");
+Check(mg.BuildTunnel((-1400, -600), (0, -600)) && mg.BuildTunnel((0, -600), (900, -150)), "Tunnel frei durch die Stadt gebaut");
+Check(mg.BuildTunnel((-500, -600), (-500, -1000)), "Abzweig an bestehenden Tunnel angeschlossen (Tunnel geteilt)");
+Check(mg.Metro.Nodes.Count == 5 && mg.Metro.Edges.Count == 4, $"Tunnelnetz: {mg.Metro.Nodes.Count} Punkte, {mg.Metro.Edges.Count} Stücke");
+var mStops = new[] { (-1300.0, -600.0), (-500.0, -600.0), (300.0, -450.0), (850.0, -170.0) }
+    .Select(p => mg.AddStop(mg.SnapFor(ModeId.Metro, p.Item1, p.Item2, 60)!.Value, ModeId.Metro)!).ToList();
+Check(mStops.All(s => s != null) && mStops.All(s => s.Name != ""), $"U-Bahnhöfe gebaut ({string.Join(", ", mStops.Select(s => s.Name))})");
+Check(mg.AddStop(mg.SnapFor(ModeId.Metro, -1200, -600, 60)!.Value, ModeId.Metro) == null, "U-Bahnhöfe brauchen Abstand");
+var mDepot = mg.AddDepot(mg.SnapFor(ModeId.Metro, -500, -900, 60)!.Value, ModeId.Metro);
+Check(mDepot != null && mDepot.Layout.VehicleCapacity(ModeId.Metro) >= 4, "U-Bahn-Betriebshof mit Abstellgleisen");
+var u1 = mg.CreateLine(mStops.Select(s => s.Id).ToList(), false, ModeId.Metro)!;
+Check(u1 != null && u1.Name == "U1", "Linie U1 über die Tunnel");
+var straight = Util.Hypot(-1300 - 850, -600 + 170);
+Check(u1!.Runs[0].Path.Length < straight * 1.2, $"Strecke folgt den Tunneln, nicht den Straßen ({u1.Runs[0].Path.Length:F0} m)");
+mg.AssignMissing(u1);
+mg.HireMissingDrivers();
+Check(mg.VehiclesOf(u1).Count > 0 && mg.VehiclesOf(u1).All(v => v.ModelId == "ubahn"), $"{mg.VehiclesOf(u1).Count} U-Bahn-Züge eingesetzt");
+mg.Advance(3 * 3600);
+Check(mg.Vehicles.Values.Any(v => v.State is VehicleState.Moving or VehicleState.Dwell or VehicleState.Layover), "Züge fahren");
+Check(mg.Today.Boardings > 0 && mStops.Sum(s => s.BoardedToday) > 0, $"Fahrgäste steigen in die U-Bahn ({mStops.Sum(s => s.BoardedToday)})");
+Check(mg.RemoveTunnelAt(-900, -600, 20) && mg.Metro.Edges.Count == 4, "befahrener Tunnel lässt sich nicht abreißen");
+var mRestored = Game.Restore(map, SaveData.FromJson(mg.Serialize().ToJson()));
+Check(mRestored.Metro.Edges.Count == 4 && mRestored.Stops.Values.Count(s => s.Mode == ModeId.Metro) == 4 && mRestored.Lines.Values.Any(l => l.Name == "U1"),
+    "Tunnel, U-Bahnhöfe und Linie werden gespeichert");
+
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;
