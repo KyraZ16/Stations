@@ -291,6 +291,8 @@ public sealed partial class Game
             return;
         }
         foreach (var d in Drivers.Values.Where(d => d.DepotId == id).ToList()) Drivers.Remove(d.Id);
+        foreach (var w in Workers.Values.Where(w => w.DepotId == id).ToList()) Workers.Remove(w.Id);
+        foreach (var p in People.Values.Where(p => p.DepotId == id).ToList()) People.Remove(p.Id);
         Depots.Remove(id);
         OnChange();
     }
@@ -302,15 +304,15 @@ public sealed partial class Game
     public void HireDrivers(int depotId, int n)
     {
         if (!Depots.TryGetValue(depotId, out var depot)) return;
-        int free = depot.Layout.DriverCapacity() - DriversOf(depotId).Count;
+        int free = depot.Layout.DriverCapacity() - StaffCount(depotId);
         if (free <= 0)
         {
-            Notify("Kein Platz für weitere Fahrer – baue ein Sozialgebäude im Betriebshof", true);
+            Notify("Kein Platz für weitere Mitarbeiter – baue ein Sozialgebäude im Betriebshof", true);
             return;
         }
         if (n > free)
         {
-            Notify($"Nur noch Platz für {free} Fahrer – baue ein weiteres Sozialgebäude", true);
+            Notify($"Nur noch Platz für {free} Mitarbeiter – baue ein weiteres Sozialgebäude", true);
             n = free;
         }
         if (!Pay(DriverHireCost * n)) return;
@@ -332,6 +334,7 @@ public sealed partial class Game
             return;
         }
         Drivers.Remove(off.Id);
+        People.Remove(off.Id);
         OnChange();
     }
 
@@ -350,7 +353,11 @@ public sealed partial class Game
 
     private void ReleaseDriver(Vehicle v)
     {
-        if (v.DriverId is int id && Drivers.TryGetValue(id, out var d)) d.VehicleId = null;
+        if (v.DriverId is int id && Drivers.TryGetValue(id, out var d))
+        {
+            d.VehicleId = null;
+            DriverGetsOut(v, d);
+        }
         v.DriverId = null;
     }
 
@@ -371,21 +378,32 @@ public sealed partial class Game
         return (int)Math.Ceiling(hours / (ShiftMax / 3600) * 1.3);
     }
 
-    /// <summary>Hire drivers so every depot covers its estimated demand. Returns how many were hired.</summary>
+    /// <summary>
+    /// Hire staff so every depot covers its estimated demand (drivers first, then mechanics and cleaners),
+    /// as far as office places allow. Returns how many were hired.
+    /// </summary>
     public int HireMissingDrivers(int? depotId = null)
     {
         int hired = 0;
         foreach (var d in Depots.Values.ToList())
         {
             if (depotId != null && d.Id != depotId) continue;
-            int have = DriversOf(d.Id).Count;
-            int missing = Math.Min(DriverDemand(d.Id) - have, d.Layout.DriverCapacity() - have);
-            if (missing > 0 && CanAfford(missing * DriverHireCost))
+            foreach (var role in new[] { StaffRole.Driver, StaffRole.Mechanic, StaffRole.Cleaner })
             {
-                HireDrivers(d.Id, missing);
-                hired += missing;
+                int have = role == StaffRole.Driver ? DriversOf(d.Id).Count : WorkersOf(d.Id, role).Count;
+                int missing = Math.Min(WorkerDemand(d.Id, role) - have, d.Layout.DriverCapacity() - StaffCount(d.Id));
+                if (missing > 0 && CanAfford(missing * DriverHireCost))
+                {
+                    HireWorkers(d.Id, role, missing);
+                    hired += missing;
+                }
             }
         }
         return hired;
     }
+
+    /// <summary>Staff still missing at a depot compared to the suggestion (all roles).</summary>
+    public int MissingStaff(int depotId) =>
+        new[] { StaffRole.Driver, StaffRole.Mechanic, StaffRole.Cleaner }.Sum(r =>
+            Math.Max(0, WorkerDemand(depotId, r) - (r == StaffRole.Driver ? DriversOf(depotId).Count : WorkersOf(depotId, r).Count)));
 }

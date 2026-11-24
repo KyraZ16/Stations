@@ -222,6 +222,11 @@ public partial class SidePanel : PanelContainer
         {
             int missing = G.DriverDemand(d.Id) - G.DriversOf(d.Id).Count;
             if (missing > 0) warnings.Add(($"{d.Name}: {missing} Fahrer fehlen", () => UI.Select(new("depot", d.Id)), null));
+            foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner })
+            {
+                int miss = G.WorkerDemand(d.Id, role) - G.WorkersOf(d.Id, role).Count;
+                if (miss > 0) warnings.Add(($"{d.Name}: {miss} {Game.RoleName(role, miss)} fehlen", () => UI.Select(new("depot", d.Id)), null));
+            }
             foreach (var w in DepotWarnings(d)) warnings.Add(($"{d.Name}: {w}", () => UI.Select(new("depot", d.Id)), null));
         }
         if (warnings.Count > 0)
@@ -295,6 +300,9 @@ public partial class SidePanel : PanelContainer
         var fleet = G.Vehicles.Values.Where(v => v.DepotId == d.Id).ToList();
         if (fleet.Count == 0) return w;
         if (d.Layout.CountConnected(ModuleType.Workshop) == 0) w.Add("keine Werkstatt – Fahrzeuge verschleißen");
+        else if (G.WorkersOf(d.Id, StaffRole.Mechanic).Count == 0) w.Add("Werkstatt ohne Mechaniker – sie bleibt geschlossen");
+        if (d.Layout.CountConnected(ModuleType.Wash) > 0 && G.WorkersOf(d.Id, StaffRole.Cleaner).Count == 0) w.Add("Waschanlage ohne Reinigungskraft");
+        if (G.StaffCount(d.Id) > d.Layout.DriverCapacity()) w.Add("zu wenig Platz im Sozialgebäude");
         if (fleet.Any(v => v.Def.Electric) && d.Layout.CountConnected(ModuleType.Charger) == 0) w.Add("E-Busse ohne Ladestation");
         if (fleet.Any(v => v.State == VehicleState.Broken)) w.Add("Fahrzeug mit Panne");
         return w;
@@ -581,6 +589,7 @@ public partial class SidePanel : PanelContainer
         VehicleState.Yard => v.Task switch
         {
             YardTask.Exit => "Verlässt den Hof",
+            YardTask.WaitDriver => "Wartet auf den Fahrer",
             YardTask.Enter => "Fährt in den Hof",
             YardTask.ToWorkshop => "Fährt zur Werkstatt",
             YardTask.ToWash => "Fährt zur Waschanlage",
@@ -652,7 +661,7 @@ public partial class SidePanel : PanelContainer
         var spots = kv.Add(d.Mode == ModeId.Tram ? "Abstellgleise (belegt)" : "Stellplätze (belegt)", $"{vs.Count} / {d.Layout.VehicleCapacity(d.Mode)}");
         if (vs.Count >= d.Layout.VehicleCapacity(d.Mode)) spots.AddThemeColorOverride("font_color", Ui.Danger);
         Bind(kv.Add("Davon im Hof"), () => vs.Count(Game.InYard).ToString());
-        kv.Add("Fahrerplätze", $"{G.DriversOf(d.Id).Count} / {d.Layout.DriverCapacity()}");
+        kv.Add("Mitarbeiterplätze", $"{G.StaffCount(d.Id)} / {d.Layout.DriverCapacity()}");
         Bind(kv.Add("Werkstatt / Wäsche / Laden"), () =>
             $"{d.Repairing} / {d.Washing}" + (d.Mode == ModeId.Bus ? $" / {d.Charging}" : ""));
         kv.Add("Werkstätten · Waschanlagen" + (d.Mode == ModeId.Bus ? " · Ladest." : ""),
@@ -685,13 +694,33 @@ public partial class SidePanel : PanelContainer
         });
         var dem = skv.Add("Bedarf (Schätzung)", demand.ToString());
         if (demand > ds.Count) dem.AddThemeColorOverride("font_color", Ui.Danger);
-        skv.Add("Lohnkosten", $"{Util.Money(ds.Count * Game.DriverWageDay)}/Tag");
+        var ws = G.WorkersOf(d.Id);
+        skv.Add("Lohnkosten (alle)", $"{Util.Money(ds.Count * Game.DriverWageDay + ws.Count * Game.WorkerWageDay)}/Tag");
+        Bind(skv.Add("Auf dem Gelände"), () => $"{d.OnSite} Personen");
         var a = Actions();
         a.AddChild(Ui.Btn("+1 Fahrer", () => G.HireDrivers(d.Id, 1)));
         a.AddChild(Ui.Btn("+5", () => G.HireDrivers(d.Id, 5)));
-        if (demand > ds.Count) a.AddChild(Ui.Btn($"{demand - ds.Count} fehlende einstellen", () => G.HireMissingDrivers(d.Id), primary: true));
         a.AddChild(Ui.Btn("−1 entlassen", () => G.FireDriver(d.Id), disabled: ds.Count == 0));
-        Hint($"Einstellung {Util.Money(Game.DriverHireCost)} · Schicht max. 8 h · Ablösung an der Endhaltestelle");
+        int missingAll = G.MissingStaff(d.Id);
+        if (missingAll > 0) Actions().AddChild(Ui.Btn($"{missingAll} fehlende Mitarbeiter einstellen", () => G.HireMissingDrivers(d.Id), primary: true));
+        Hint($"Einstellung {Util.Money(Game.DriverHireCost)} · Schicht max. 8 h · Ablösung an der Endhaltestelle. " +
+             "Fahrer warten im Sozialgebäude und gehen zu Fuß zum Fahrzeug – ein Sozialgebäude nah an den Stellplätzen spart Zeit.");
+
+        // Yard staff: mechanics and cleaners in three shifts
+        foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner })
+        {
+            var list = G.WorkersOf(d.Id, role);
+            int need = G.WorkerDemand(d.Id, role);
+            var rkv = new Ui.KeyValues(_box);
+            var cnt = rkv.Add(role == StaffRole.Mechanic ? "Mechaniker" : "Reinigungskräfte", $"{list.Count} (empfohlen {need})");
+            if (list.Count < need) cnt.AddThemeColorOverride("font_color", Ui.Danger);
+            rkv.Add("Früh · Spät · Nacht", string.Join(" · ", Enum.GetValues<ShiftId>().Select(sh => list.Count(x => x.Shift == sh))));
+            var ra = Actions();
+            ra.AddChild(Ui.Btn(role == StaffRole.Mechanic ? "+1 Mechaniker" : "+1 Reinigungskraft", () => G.HireWorkers(d.Id, role, 1)));
+            ra.AddChild(Ui.Btn("−1", () => G.FireWorker(d.Id, role), disabled: list.Count == 0));
+        }
+        Hint("Mechaniker: je Werkstattspur einer pro Schicht, sonst bleibt die Spur zu. Reinigungskräfte: einer pro Waschanlage und Schicht; " +
+             "weitere reinigen geparkte Fahrzeuge von innen. Neue Mitarbeiter kommen in die Schicht mit den wenigsten Leuten.");
         foreach (var dr in ds.OrderByDescending(x => x.VehicleId != null).Take(25))
             Bind(Ui.Row(_box, dr.Name), () =>
             {

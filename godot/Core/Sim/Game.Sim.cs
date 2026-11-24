@@ -53,7 +53,7 @@ public sealed partial class Game
         if (Math.Floor((Time - 3 * 3600) / 86400) != shiftDayBefore)
             foreach (var d in Drivers.Values) d.Worked = 0;
 
-        double wage = Drivers.Count * DriverWageDay * dt / 86400;
+        double wage = (Drivers.Count * DriverWageDay + Workers.Count * WorkerWageDay) * dt / 86400;
         Money -= wage;
         Today.Costs += wage;
 
@@ -80,6 +80,7 @@ public sealed partial class Game
 
         GenerateDemand(dt);
         foreach (var v in Vehicles.Values) StepVehicle(v, dt);
+        StepPeople(dt);
 
         _expireTimer += dt;
         if (_expireTimer > 60)

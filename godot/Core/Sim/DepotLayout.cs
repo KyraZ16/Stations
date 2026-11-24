@@ -33,9 +33,10 @@ public sealed class PlacedModule
 /// Parking spots only count when a short end touches a driveway connected to the gate;
 /// offices provide room for drivers.
 /// </summary>
-public sealed class DepotLayout
+public sealed partial class DepotLayout
 {
     public const double CellSize = 3; // m
+    /// <summary>Staff (drivers, mechanics, cleaners) per office: lockers and break room.</summary>
     public const int DriversPerOffice = 25;
 
     public int Width { get; set; } = 24;
@@ -48,9 +49,9 @@ public sealed class DepotLayout
         [ModuleType.BusSpot] = new(ModuleType.BusSpot, "Busstellplatz", 1, 5, 10_000, 0.04, "8d9096", "+1 Bus (Stirnseite muss am Fahrweg liegen)"),
         [ModuleType.TramSpot] = new(ModuleType.TramSpot, "Abstellgleis", 1, 12, 60_000, 0.06, "b8ada0", "+1 Tram (Stirnseite muss am Gleis liegen)"),
         [ModuleType.LongBusSpot] = new(ModuleType.LongBusSpot, "Gelenkbus-Stellplatz", 1, 7, 14_000, 0.04, "7f8794", "+1 Bus bis 21 m, auch Gelenkbusse"),
-        [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 150_000, 7, "d9cbb0", $"Platz für {DriversPerOffice} Fahrer"),
-        [ModuleType.Workshop] = new(ModuleType.Workshop, "Werkstatt", 4, 6, 400_000, 9, "9fb3c8", "Repariert 2 Fahrzeuge gleichzeitig (+25 % Zustand pro Stunde)"),
-        [ModuleType.Wash] = new(ModuleType.Wash, "Waschanlage", 2, 6, 120_000, 5, "a8d0d8", "Wäscht ein Fahrzeug nach dem anderen (15 min pro Wäsche)"),
+        [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 150_000, 7, "d9cbb0", $"Platz für {DriversPerOffice} Mitarbeiter: Umkleide, Pausenraum ({OfficePlan.Seats.Length} Plätze)"),
+        [ModuleType.Workshop] = new(ModuleType.Workshop, "Werkstatt", 4, 6, 400_000, 9, "9fb3c8", "2 Spuren, je Spur ein Mechaniker im Dienst (+25 % Zustand pro Stunde)"),
+        [ModuleType.Wash] = new(ModuleType.Wash, "Waschanlage", 2, 6, 120_000, 5, "a8d0d8", "Mit Reinigungskraft im Dienst: ein Fahrzeug nach dem anderen (15 min pro Wäsche)"),
         [ModuleType.Charger] = new(ModuleType.Charger, "Ladestation", 1, 1, 60_000, 2.2, "3fae6a", "Direkt neben einen Stellplatz bauen: lädt den E-Bus dort (voll in 3 Stunden)"),
     };
 
@@ -171,6 +172,7 @@ public sealed class DepotLayout
         return Modules.Count(m => SpotFor(m.Type, mode) && IsConnected(m, reach));
     }
 
+    /// <summary>Staff places (drivers, mechanics and cleaners together).</summary>
     public int DriverCapacity()
     {
         var reach = Reachable();

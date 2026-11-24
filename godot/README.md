@@ -29,6 +29,7 @@ Nach `--` auf der Kommandozeile, z. B.
 - `--time=2` spult auf die angegebene Uhrzeit vor (z. B. nachts, wenn alle Fahrzeuge im Hof stehen)
 - `--depot` öffnet den ersten Betriebshof im 3D-Editor (`--depot=tram` den Tram-Betriebshof, `--depot=edit` mit Beispiel-Bauteilen)
 - `--days=12` spult Tage vor (z. B. um Verschleiß zu sehen), `--select=depot|vehicle|line` öffnet ein Panel
+- `--interior` öffnet den Betriebshof in der Innenansicht; `--camdist=30`, `--camyaw=0.6`, `--campitch=0.8` und `--camfocus=office|workshop|wash` stellen die Kamera ein
 - `--debugui` listet Panel-Elemente mit auffällig großer Mindestbreite
 
 ## Stand
@@ -42,4 +43,6 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] Ladescreen mit Schritten, Fortschritt, Abbrechen und Erneut versuchen
 - [x] Bessere 3D-Optik im Betriebshof: prozedurale Busse (Räder, Türen, Fensterband, Lichter, Zielanzeige; Gelenkbus mit Faltenbalg, E-Bus mit Akkus) und Trams, Sozialgebäude mit Fensterbändern, Stahlhallen, Ladesäulen; Tag/Nacht nach Spielzeit mit Laternen, leuchtenden Fenstern und Scheinwerfern; Straße, Gehwege, Bäume, strukturierte Oberflächen
 - [x] Bessere Kartenansicht: Straßennamen entlang der Straßen (nach Bedeutung und Zoom, ohne Überlappung), Linien auf gemeinsamen Straßen nebeneinander wie im Netzplan, Fahrzeuge größer mit Liniennummer, Minikarte unten links (Klicken/Ziehen springt), Hinweise in der Übersicht umbrechen
+- [x] Personal im Betriebshof: Fahrer, Mechaniker und Reinigungskräfte als Figuren; Sozialgebäude mit Umkleide, Pausenraum und Dispo zum Hineinsehen (Innenansicht mit I oder nah heranzoomen), Werkstatt mit Hebebühnen; Fahrer gehen zu Fuß zum Fahrzeug (Abfahrt erst, wenn sie eingestiegen sind), Mechaniker und Reinigungskräfte arbeiten in Früh-/Spät-/Nachtschicht – ohne sie bleiben Werkstattspuren und Waschanlagen zu; freie Reinigungskräfte putzen geparkte Fahrzeuge innen; Maus über eine Person zeigt Name und Tätigkeit
+- [ ] Später: Service-Mitarbeiter und Kunden (Kundencenter)
 - [ ] U-Bahn, Kampagne

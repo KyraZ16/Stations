@@ -60,6 +60,14 @@ public partial class Main : Node
                 game.PlaceModule(d0, Core.Sim.ModuleType.Workshop, 2, 8, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.LongBusSpot, 18, 0, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Charger, 17, 6, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Office, 7, 8, 0);
+                game.HireMissingDrivers(d0.Id); // mechanics and cleaners for the new workshop and wash
+                foreach (var v in game.Vehicles.Values.Where(v => v.DepotId == d0.Id && v.State == VehicleState.Depot).Take(3))
+                {
+                    v.Condition = 0.55; // something for the workshop and the wash to do
+                    v.Cleanliness = 0.5;
+                }
+                game.Advance(600);
             }
         }
         if (_dev.TryGetValue("days", out var dd) && int.TryParse(dd, out int days)) game.Advance(days * 86400.0);
@@ -74,6 +82,11 @@ public partial class Main : Node
         {
             if (_dev["depot"] == "tram") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.Tram).Id);
             else _view!.OpenDepotEditor(game.Depots.Values.First().Id);
+            float? camDist = _dev.TryGetValue("camdist", out var cd) && float.TryParse(cd, System.Globalization.CultureInfo.InvariantCulture, out float cdv) ? cdv : null;
+            float? camYaw = _dev.TryGetValue("camyaw", out var cy) && float.TryParse(cy, System.Globalization.CultureInfo.InvariantCulture, out float cyv) ? cyv : null;
+            float? camPitch = _dev.TryGetValue("campitch", out var cp) && float.TryParse(cp, System.Globalization.CultureInfo.InvariantCulture, out float cpv) ? cpv : null;
+            Core.Sim.ModuleType? focus = _dev.TryGetValue("camfocus", out var cf) && Enum.TryParse<Core.Sim.ModuleType>(cf, true, out var ft) ? ft : null;
+            _view!.DepotEditor?.SetView(_dev.ContainsKey("interior"), camDist, focus, camYaw, camPitch);
         }
         if (_dev.TryGetValue("zoom", out var z) && float.TryParse(z, System.Globalization.CultureInfo.InvariantCulture, out float zf))
             _view!.ZoomBy(zf);

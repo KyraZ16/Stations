@@ -1,5 +1,6 @@
 using Godot;
 using Stations.Core;
+using Stations.Core.Sim;
 
 namespace Stations.DepotView;
 
@@ -236,31 +237,100 @@ public sealed class Props
 
     // ---------------------------------------------------------------- buildings
 
-    /// <summary>Office: storeys with ribbon windows (glowing at night), entrance, parapet.</summary>
-    public Node3D Office(Vector3 size, string color)
+    /// <summary>
+    /// Office with a walk-in ground floor: break room (tables, chairs, kitchen), lockers and a dispatch desk,
+    /// laid out by <see cref="OfficePlan"/>. The door is in the middle of the local +Z wall.
+    /// Everything above the ground floor (ceiling, upper storeys, roof) goes into <paramref name="upper"/>,
+    /// so the interior view can hide it.
+    /// </summary>
+    public Node3D Office(Vector3 size, string color, out Node3D upper)
     {
         var n = new Node3D();
+        upper = new Node3D();
+        n.AddChild(upper);
         var wall = Solid(color, 0.85f);
-        Box(n, new Vector3(0, size.Y / 2, 0), size, wall);
-        int storeys = Math.Max(1, (int)(size.Y / 3.2f));
-        for (int s = 0; s < storeys; s++)
+        float hx = size.X / 2, hz = size.Z / 2, wh = (float)OfficePlan.WallHeight, t = 0.2f, door = 1.4f;
+
+        // Ground floor: floor, outer walls with the door gap, ribbon windows
+        Box(n, new Vector3(0, 0.05f, 0), new Vector3(size.X, 0.1f, size.Z), Solid("cbbfa9", 0.7f), shadow: false);
+        Box(n, new Vector3(0, wh / 2, -hz + t / 2), new Vector3(size.X, wh, t), wall);
+        Box(n, new Vector3(-hx + t / 2, wh / 2, 0), new Vector3(t, wh, size.Z), wall);
+        Box(n, new Vector3(hx - t / 2, wh / 2, 0), new Vector3(t, wh, size.Z), wall);
+        float seg = hx - door / 2;
+        foreach (int sgn in new[] { -1, 1 })
+            Box(n, new Vector3(sgn * (door / 2 + seg / 2), wh / 2, hz - t / 2), new Vector3(seg, wh, t), wall);
+        Box(n, new Vector3(0, wh - 0.35f, hz - t / 2), new Vector3(door, 0.7f, t), wall); // above the door
+        Box(n, new Vector3(0, 2.45f, hz + 0.45f), new Vector3(2.4f, 0.12f, 0.9f), DarkSteel); // canopy
+        // Ribbon windows: back and sides full length, the front split by the door
+        Box(n, new Vector3(0, 1.6f, -hz - 0.02f), new Vector3(size.X * 0.82f, 1.2f, 0.04f), Window, shadow: false);
+        foreach (int sgn in new[] { -1, 1 })
+            Box(n, new Vector3(sgn * (hx + 0.02f), 1.6f, 0), new Vector3(0.04f, 1.2f, size.Z * 0.82f), Window, shadow: false);
+        foreach (int sgn in new[] { -1, 1 })
+            Box(n, new Vector3(sgn * (door / 2 + seg * 0.45f), 1.6f, hz + 0.02f), new Vector3(seg * 0.7f, 1.2f, 0.04f), Window, shadow: false);
+
+        // Interior: partition between break room and the lockers / dispatch side
+        float pz0 = -hz, pz1 = (float)OfficePlan.PartitionEnd;
+        Box(n, new Vector3(0, wh / 2, (pz0 + pz1) / 2), new Vector3(0.12f, wh, pz1 - pz0), Solid("e9e4da", 0.8f));
+        var wood = Solid("a77b52", 0.6f);
+        var chair = Solid("3f6fa8", 0.6f);
+        var metal = Solid("8a96a3", 0.45f, 0.3f);
+        foreach (var (tx, tz) in OfficePlan.Tables)
         {
-            float y = 1.6f + s * 3.2f;
-            Box(n, new Vector3(0, y, 0), new Vector3(size.X + 0.04f, 1.25f, size.Z * 0.82f), Window, shadow: false);
-            Box(n, new Vector3(0, y, 0), new Vector3(size.X * 0.82f, 1.25f, size.Z + 0.04f), Window, shadow: false);
+            Box(n, new Vector3((float)tx, 0.74f, (float)tz), new Vector3(1.4f, 0.06f, 0.9f), wood);
+            Box(n, new Vector3((float)tx, 0.37f, (float)tz), new Vector3(0.12f, 0.72f, 0.12f), metal);
         }
-        Box(n, new Vector3(0, 1.15f, size.Z / 2 + 0.03f), new Vector3(1.6f, 2.3f, 0.06f), Glass); // entrance
-        Box(n, new Vector3(0, 2.45f, size.Z / 2 + 0.4f), new Vector3(2.4f, 0.12f, 0.9f), DarkSteel); // canopy
-        Box(n, new Vector3(0, size.Y + 0.25f, 0), new Vector3(size.X + 0.2f, 0.5f, size.Z + 0.2f), Solid("7d766c"));
-        Box(n, new Vector3(size.X * 0.2f, size.Y + 0.7f, -size.Z * 0.15f), new Vector3(1.4f, 0.8f, 1.0f), Steel); // roof unit
+        foreach (var (sx, sz, fx, fz) in OfficePlan.Seats)
+        {
+            Box(n, new Vector3((float)sx, 0.45f, (float)sz), new Vector3(0.45f, 0.06f, 0.45f), chair);
+            Box(n, new Vector3((float)(sx - fx * 0.22), 0.72f, (float)(sz - fz * 0.22)), fz != 0 ? new Vector3(0.45f, 0.5f, 0.05f) : new Vector3(0.05f, 0.5f, 0.45f), chair);
+            Box(n, new Vector3((float)sx, 0.22f, (float)sz), new Vector3(0.05f, 0.44f, 0.05f), metal, shadow: false);
+        }
+        for (int i = 0; i < OfficePlan.Lockers.Length; i++)
+        {
+            float lx = (float)OfficePlan.Lockers[i];
+            Box(n, new Vector3(lx, 1.0f, (float)OfficePlan.LockerZ), new Vector3(0.56f, 2.0f, 0.5f), Solid(i % 2 == 0 ? "6d8fa8" : "7d9db5", 0.5f, 0.2f));
+            Box(n, new Vector3(lx + 0.18f, 1.1f, (float)OfficePlan.LockerZ + 0.26f), new Vector3(0.04f, 0.2f, 0.03f), DarkSteel, shadow: false);
+        }
+        Box(n, new Vector3(2.1f, 0.25f, (float)OfficePlan.LockerStandZ + 0.4f), new Vector3(2.6f, 0.06f, 0.35f), wood); // bench
+        var (dx, dz) = OfficePlan.Desk;
+        Box(n, new Vector3((float)dx, 0.74f, (float)dz), new Vector3(1.6f, 0.06f, 0.8f), Solid("e6e2da", 0.5f));
+        Box(n, new Vector3((float)dx, 0.37f, (float)dz), new Vector3(1.5f, 0.72f, 0.06f), Solid("bdb7ab", 0.6f));
+        Box(n, new Vector3((float)dx - 0.3f, 1.02f, (float)dz - 0.25f), new Vector3(0.55f, 0.36f, 0.04f), Display, shadow: false);
+        Box(n, new Vector3((float)dx + 0.35f, 1.02f, (float)dz - 0.25f), new Vector3(0.55f, 0.36f, 0.04f), ChargerScreen, shadow: false);
+        Box(n, new Vector3((float)dx, 0.45f, (float)dz + 0.6f), new Vector3(0.5f, 0.06f, 0.5f), chair);
+        var (kx, kz) = OfficePlan.Kitchen;
+        Box(n, new Vector3((float)kx, 0.45f, (float)kz), new Vector3(0.6f, 0.9f, 1.6f), Solid("f0eee8", 0.4f));
+        Box(n, new Vector3((float)kx, 1.05f, (float)kz - 0.4f), new Vector3(0.35f, 0.3f, 0.3f), DarkSteel); // coffee machine
+        Box(n, new Vector3(-hx + 0.6f, 0.02f, hz - 1.2f), new Vector3(0.8f, 0.03f, 1.2f), Solid("7a4b3a", 0.9f), shadow: false); // mat
+
+        // Ceiling with lights, upper storeys, roof
+        Box(upper, new Vector3(0, wh + 0.1f, 0), new Vector3(size.X, 0.2f, size.Z), Solid("d8d4cc", 0.9f));
+        foreach (var (lx, lz) in new[] { (-2.2f, -2.3f), (-2.2f, 0.4f), (2.1f, -2.6f), (2.6f, 1.4f) })
+            Box(upper, new Vector3(lx, wh - 0.02f, lz), new Vector3(1.2f, 0.04f, 0.3f), HallLight, shadow: false);
+        float top = size.Y;
+        if (top > wh + 0.4f)
+        {
+            Box(upper, new Vector3(0, (wh + 0.2f + top) / 2, 0), new Vector3(size.X, top - wh - 0.2f, size.Z), wall);
+            int storeys = Math.Max(1, (int)(top / 3.2f));
+            for (int st = 1; st < storeys; st++)
+            {
+                float y = 1.6f + st * 3.2f;
+                Box(upper, new Vector3(0, y, 0), new Vector3(size.X + 0.04f, 1.25f, size.Z * 0.82f), Window, shadow: false);
+                Box(upper, new Vector3(0, y, 0), new Vector3(size.X * 0.82f, 1.25f, size.Z + 0.04f), Window, shadow: false);
+            }
+        }
+        Box(upper, new Vector3(0, top + 0.25f, 0), new Vector3(size.X + 0.2f, 0.5f, size.Z + 0.2f), Solid("7d766c"));
+        Box(upper, new Vector3(size.X * 0.2f, top + 0.7f, -size.Z * 0.15f), new Vector3(1.4f, 0.8f, 1.0f), Steel); // roof unit
         return n;
     }
 
     /// <summary>Open steel hall (workshop or wash bay) so vehicles inside stay visible.</summary>
-    public Node3D Hall(Vector3 size, bool vertical, string accent, bool wash, out List<Node3D> brushes)
+    public Node3D Hall(Vector3 size, bool vertical, string accent, bool wash, out List<Node3D> brushes, out Node3D roofNode)
     {
         brushes = new List<Node3D>();
         var n = new Node3D();
+        roofNode = new Node3D();
+        n.AddChild(roofNode);
         float px = size.X / 2 - 0.25f, pz = size.Z / 2 - 0.25f, h = size.Y;
         // Steel frame: pillars along the long sides
         int bays = Math.Max(2, (int)((vertical ? size.Z : size.X) / 4.5f));
@@ -283,7 +353,7 @@ public sealed class Props
         {
             AlbedoColor = new Color("c9d6e2") { A = 0.38f }, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Roughness = 0.2f,
         };
-        Box(n, new Vector3(0, h + 0.05f, 0), new Vector3(size.X + 0.4f, 0.12f, size.Z + 0.4f), roof, shadow: false);
+        Box(roofNode, new Vector3(0, h + 0.05f, 0), new Vector3(size.X + 0.4f, 0.12f, size.Z + 0.4f), roof, shadow: false);
         for (int i = 0; i < bays; i++)
         {
             float t = -0.5f + (i + 0.5f) / bays;
@@ -318,6 +388,23 @@ public sealed class Props
                 Box(n, pos, vertical ? new Vector3(0.8f, 1.0f, 1.8f) : new Vector3(1.8f, 1.0f, 0.8f), Solid(i == 1 ? "c62828" : "4b5563", 0.6f));
             }
             Box(n, new Vector3(0, 0.03f, 0), vertical ? new Vector3(0.15f, 0.02f, size.Z - 1) : new Vector3(size.X - 1, 0.02f, 0.15f), Solid("e0b21c", 0.6f), shadow: false);
+            // Two-post lifts in both lanes (lanes are one cell left and right of the middle)
+            var liftMat = Solid("d9a21b", 0.5f, 0.3f);
+            foreach (int lane in new[] { -1, 1 })
+                foreach (int end in new[] { -1, 1 })
+                    foreach (int lr in new[] { -1, 1 })
+                    {
+                        float across = lane * (float)DepotLayout.CellSize + lr * 1.65f, along = end * 3.4f;
+                        var p = vertical ? new Vector3(across, 1.1f, along) : new Vector3(along, 1.1f, across);
+                        Box(n, p, new Vector3(0.22f, 2.2f, 0.22f), liftMat);
+                    }
+            // pit markings
+            foreach (int lane in new[] { -1, 1 })
+            {
+                float across = lane * (float)DepotLayout.CellSize;
+                Box(n, vertical ? new Vector3(across, 0.025f, 0) : new Vector3(0, 0.025f, across),
+                    vertical ? new Vector3(2.9f, 0.01f, size.Z - 2.2f) : new Vector3(size.X - 2.2f, 0.01f, 2.9f), Solid("6f7680", 0.8f), shadow: false);
+            }
         }
         return n;
     }
@@ -363,5 +450,82 @@ public sealed class Props
         };
         n.AddChild(light);
         return n;
+    }
+
+    // ---------------------------------------------------------------- yard furniture
+
+    /// <summary>Tool trolley for the workshop.</summary>
+    public Node3D Trolley()
+    {
+        var n = new Node3D();
+        Box(n, new Vector3(0, 0.5f, 0), new Vector3(0.8f, 0.9f, 0.5f), Solid("c62828", 0.5f));
+        Box(n, new Vector3(0, 0.97f, 0), new Vector3(0.84f, 0.04f, 0.54f), DarkSteel);
+        return n;
+    }
+
+    /// <summary>Control desk at a wash bay.</summary>
+    public Node3D WashDesk()
+    {
+        var n = new Node3D();
+        Box(n, new Vector3(0, 0.55f, 0), new Vector3(0.5f, 1.1f, 0.4f), Solid("e8e8e4", 0.5f));
+        Box(n, new Vector3(-0.21f, 1.0f, 0), new Vector3(0.04f, 0.22f, 0.3f), Display, shadow: false);
+        return n;
+    }
+
+    // ---------------------------------------------------------------- people
+
+    /// <summary>Moving parts of a figure.</summary>
+    public sealed class Figure
+    {
+        public required Node3D Root, Body, LegL, LegR, ArmL, ArmR;
+    }
+
+    /// <summary>
+    /// A person, facing local +X, about 1.75 m tall: drivers in light blue shirts and navy trousers,
+    /// mechanics in orange overalls, cleaners in green with grey trousers.
+    /// </summary>
+    public Figure Person(StaffRole role, int seed)
+    {
+        var rng = new Random(seed);
+        string shirt = role switch { StaffRole.Driver => "8fb4d9", StaffRole.Mechanic => "e07a1f", _ => "3b9b5a" };
+        string legs = role switch { StaffRole.Driver => "2b3442", StaffRole.Mechanic => "d06d17", _ => "565b62" };
+        string[] skins = { "f1c7a5", "d9a27e", "a86f4c", "7b4a2e", "f4d3b8" };
+        string[] hairs = { "2b2118", "5a3b22", "a8763e", "1a1a1a", "8f8a84", "c49a5a" };
+        var root = new Node3D();
+        var body = new Node3D();
+        root.AddChild(body);
+        var skin = Solid(skins[rng.Next(skins.Length)], 0.8f);
+        Node3D Limb(Vector3 pivot, Vector3 size, Material mat)
+        {
+            var p = new Node3D { Position = pivot };
+            body.AddChild(p);
+            Box(p, new Vector3(0, -size.Y / 2, 0), size, mat, shadow: true);
+            return p;
+        }
+        var legL = Limb(new Vector3(0, 0.88f, -0.1f), new Vector3(0.17f, 0.86f, 0.16f), Solid(legs, 0.8f));
+        var legR = Limb(new Vector3(0, 0.88f, 0.1f), new Vector3(0.17f, 0.86f, 0.16f), Solid(legs, 0.8f));
+        Box(body, new Vector3(0, 1.18f, 0), new Vector3(0.26f, 0.62f, 0.44f), Solid(shirt, 0.8f));
+        if (role == StaffRole.Mechanic) Box(body, new Vector3(0.005f, 1.3f, 0), new Vector3(0.27f, 0.08f, 0.45f), Solid("e8e33a", 0.5f)); // reflective band
+        if (role == StaffRole.Driver) Box(body, new Vector3(0.135f, 1.3f, 0), new Vector3(0.01f, 0.3f, 0.06f), Solid("1f3b70", 0.6f)); // tie
+        var armL = Limb(new Vector3(0, 1.46f, -0.28f), new Vector3(0.11f, 0.6f, 0.11f), Solid(shirt, 0.8f));
+        var armR = Limb(new Vector3(0, 1.46f, 0.28f), new Vector3(0.11f, 0.6f, 0.11f), Solid(shirt, 0.8f));
+        Box(armL, new Vector3(0, -0.63f, 0), new Vector3(0.1f, 0.1f, 0.1f), skin, shadow: false);
+        Box(armR, new Vector3(0, -0.63f, 0), new Vector3(0.1f, 0.1f, 0.1f), skin, shadow: false);
+        Box(body, new Vector3(0, 1.53f, 0), new Vector3(0.1f, 0.08f, 0.1f), skin, shadow: false); // neck
+        var head = new MeshInstance3D
+        {
+            Mesh = new SphereMesh { Radius = 0.12f, Height = 0.26f, RadialSegments = 10, Rings = 6 },
+            Position = new Vector3(0, 1.68f, 0), MaterialOverride = skin,
+        };
+        body.AddChild(head);
+        var hair = new MeshInstance3D
+        {
+            Mesh = new SphereMesh { Radius = 0.125f, Height = 0.15f, RadialSegments = 10, Rings = 4, IsHemisphere = true },
+            Position = new Vector3(-0.01f, 1.71f, 0), MaterialOverride = Solid(hairs[rng.Next(hairs.Length)], 0.9f),
+        };
+        body.AddChild(hair);
+        if (role == StaffRole.Driver && rng.Next(3) == 0)
+            Box(body, new Vector3(0, 1.8f, 0), new Vector3(0.26f, 0.06f, 0.24f), Solid("1f3b70", 0.6f)); // cap
+        return new Figure { Root = root, Body = body, LegL = legL, LegR = legR, ArmL = armL, ArmR = armR };
     }
 }

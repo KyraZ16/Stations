@@ -490,7 +490,7 @@ public sealed partial class Game
         {
             // Parked vehicles first drive out of the yard; the road trip starts at the gate
             if (to == DeadheadTarget.Depot || !TakeDriver(v)) return;
-            StartExit(v, to);
+            BeginBoarding(v, to);
             return;
         }
         if (v.State == VehicleState.Yard)

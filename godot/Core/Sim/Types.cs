@@ -23,6 +23,8 @@ public sealed class Depot
 
     // Runtime status of the yard services (updated by the simulation, not saved)
     public int Repairing, Washing, Charging, Workshops, WashBays, Chargers;
+    /// <summary>Workshop lanes / wash bays with someone on duty right now; staff on the grounds.</summary>
+    public int LanesStaffed, WashStaffed, OnSite;
 }
 
 /// <summary>One direction of a line: a path through an ordered list of stops.</summary>
@@ -70,10 +72,75 @@ public sealed class Driver
     public int? VehicleId;
 }
 
+public enum StaffRole { Driver, Mechanic, Cleaner }
+
+/// <summary>Work shifts of yard staff: early 06–14, late 14–22, night 22–06.</summary>
+public enum ShiftId { Early, Late, Night }
+
+/// <summary>Yard staff besides drivers: mechanics (workshop) and cleaners (wash bay, interior cleaning).</summary>
+public sealed class Worker
+{
+    public int Id;
+    public string Name = "";
+    public int DepotId;
+    public StaffRole Role;
+    public ShiftId Shift;
+}
+
+/// <summary>What a person in the yard is doing.</summary>
+public enum PersonAct
+{
+    Walking, // on the way (see Goal)
+    Changing, // at the locker (start or end of the shift)
+    Resting, // break room: seated or standing in the office
+    Working, // at the workplace (workshop lane, wash bay, inside a vehicle)
+    Waiting, // at the workplace without work (workbench)
+}
+
+/// <summary>Where a walking person is heading.</summary>
+public enum PersonGoal { None, Locker, Seat, Vehicle, Post, Clean, Gate }
+
+/// <summary>
+/// A member of staff who is on the depot grounds right now (runtime only, rebuilt after loading).
+/// Positions are yard meters (origin = yard center), like vehicles in the yard.
+/// </summary>
+public sealed class Person
+{
+    public int Id; // staff id (driver or worker)
+    public StaffRole Role;
+    public int DepotId;
+    public double X, Y, Ang;
+    public List<(double X, double Y)> Path = new();
+    public int PathIdx;
+    public PersonAct Act;
+    public PersonGoal Goal;
+    /// <summary>Goal after the locker (shift start: to work; shift end: home).</summary>
+    public PersonGoal AfterLocker;
+    public double Until;
+    /// <summary>Office the person is in (null when outdoors).</summary>
+    public PlacedModule? Office;
+    /// <summary>Office the person is walking into (becomes <see cref="Office"/> on arrival).</summary>
+    public PlacedModule? TargetOffice;
+    /// <summary>End point of the current walk.</summary>
+    public (double X, double Y) Target;
+    /// <summary>Heading to take on arrival (NaN: keep walking direction).</summary>
+    public double FaceAng = double.NaN;
+    /// <summary>Seat in the office's break room, or -1.</summary>
+    public int Seat = -1;
+    /// <summary>Vehicle the person walks to (driver) or cleans (cleaner).</summary>
+    public int? VehicleId;
+    /// <summary>Workplace (module position and lane) of mechanics and cleaners.</summary>
+    public (int X, int Y, int Bay)? Post;
+    /// <summary>Inside a vehicle: not drawn.</summary>
+    public bool Hidden;
+    /// <summary>Total distance walked (drives the walking animation).</summary>
+    public double Walked;
+}
+
 public enum VehicleState { Depot, Deadhead, Layover, Moving, Dwell, Broken, Yard }
 
-/// <summary>Movement inside the depot yard.</summary>
-public enum YardTask { None, Enter, Exit, ToWorkshop, ToWash, ToSpot }
+/// <summary>Movement inside the depot yard. WaitDriver: dispatched, waiting for the driver to walk over and board.</summary>
+public enum YardTask { None, Enter, Exit, ToWorkshop, ToWash, ToSpot, WaitDriver }
 
 /// <summary>Where a vehicle stands in the yard.</summary>
 public enum YardBay { Spot, Workshop, Wash }

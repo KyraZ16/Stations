@@ -153,6 +153,7 @@ Console.WriteLine("== Verschleiß und Wartung (je 14 Tage)");
             int y = d.Mode == ModeId.Tram ? 14 : 8;
             string? err = gm.PlaceModule(d, ModuleType.Workshop, 2, y, 0);
             if (err != null) Console.WriteLine($"  Werkstatt nicht gebaut: {err}");
+            gm.HireWorkers(d.Id, StaffRole.Mechanic, gm.WorkerDemand(d.Id, StaffRole.Mechanic));
         }
     }
     double costsBefore = 0;
@@ -226,7 +227,13 @@ var worn = yg.Vehicles.Values.First();
 worn.Condition = 0.2; // will go for service at the terminus
 yg.PlaceModule(yDepot, ModuleType.Workshop, 2, 8, 0);
 bool sawWorkshop = false, backHome = false;
-for (int s = 0; s < 6 * 3600; s += 10)
+// Without mechanics the workshop stays closed
+yg.Advance(2 * 3600);
+Check(!(worn.State == VehicleState.Depot && worn.Bay == YardBay.Workshop) && worn.Condition < 0.3, "ohne Mechaniker bleibt die Werkstatt zu");
+Check(yg.PlaceModule(yDepot, ModuleType.Office, 16, 8, 0) == null, "zweites Sozialgebäude gebaut (Platz für Mechaniker)");
+yg.HireWorkers(yDepot.Id, StaffRole.Mechanic, 6);
+Check(yg.WorkersOf(yDepot.Id, StaffRole.Mechanic).Select(w => w.Shift).Distinct().Count() == 3, "Mechaniker auf Früh-, Spät- und Nachtschicht verteilt");
+for (int s = 0; s < 8 * 3600; s += 10)
 {
     yg.Advance(10);
     if (worn.State == VehicleState.Depot && worn.Bay == YardBay.Workshop) sawWorkshop = true;
@@ -234,6 +241,48 @@ for (int s = 0; s < 6 * 3600; s += 10)
 }
 Check(sawWorkshop, "abgenutzter Bus fährt in die Werkstatt");
 Check(backHome, "nach der Reparatur zurück auf den Stellplatz");
+
+Console.WriteLine("== Personal auf dem Gelände");
+var mechOnSite = yg.People.Values.Where(p => p.Role == StaffRole.Mechanic).ToList();
+var onDuty = yg.WorkersOf(yDepot.Id, StaffRole.Mechanic).Count(w => Game.OnDuty(w.Shift, yg.Time));
+Check(mechOnSite.Count <= onDuty + 2 && mechOnSite.Count > 0, $"nur die Schicht im Dienst ist da ({mechOnSite.Count} Mechaniker auf dem Gelände)");
+Check(yg.People.Values.Any(p => p.Role == StaffRole.Driver && p.Office != null), "Fahrer warten im Sozialgebäude");
+
+// A dispatched bus waits for its driver to walk over
+var pg = new Game(map, sandbox: true, seed: 8);
+var pDepot = pg.AddDepot(map.Graph.Snap(-200, -900, 300)!.Value)!;
+var pLine = pg.CreateLine(new List<int>
+{
+    pg.AddStop(map.Graph.Snap(-1600, -600, 200)!.Value)!.Id,
+    pg.AddStop(map.Graph.Snap(400, -600, 200)!.Value)!.Id,
+}, false)!;
+pg.AssignMissing(pLine);
+pg.HireMissingDrivers();
+pg.Advance(2); // people take their places
+bool sawBoarding = false, sawWalker = false;
+double firstOut = -1;
+for (int s = 0; s < 900 && firstOut < 0; s++)
+{
+    pg.Advance(1);
+    sawBoarding |= pg.Vehicles.Values.Any(v => v.Task == YardTask.WaitDriver);
+    sawWalker |= pg.People.Values.Any(p => p.Goal == PersonGoal.Vehicle && p.Act == PersonAct.Walking);
+    if (pg.Vehicles.Values.Any(v => v.State == VehicleState.Yard && v.Task == YardTask.Exit)) firstOut = s;
+}
+Check(sawBoarding && sawWalker, "Bus wartet, bis der Fahrer hingelaufen ist");
+Check(firstOut > 5, $"Abfahrt nach dem Fußweg ({firstOut:F0} s)");
+
+// Spare cleaners clean parked vehicles from the inside
+var dirty = pg.Vehicles.Values.First(v => v.State == VehicleState.Depot);
+dirty.Cleanliness = 0.5;
+pg.HireWorkers(pDepot.Id, StaffRole.Cleaner, 3);
+double cleanBefore = dirty.Cleanliness;
+for (int s = 0; s < 24 * 3600 && dirty.Cleanliness < 0.9; s += 30) pg.Advance(30);
+Check(dirty.Cleanliness > cleanBefore + 0.3, $"Reinigungskraft reinigt geparkten Bus innen ({cleanBefore:P0} → {dirty.Cleanliness:P0})");
+var pRestored = Game.Restore(map, SaveData.FromJson(pg.Serialize().ToJson()));
+Check(pRestored.Workers.Count == pg.Workers.Count && pRestored.Workers.Values.All(w => pg.Workers[w.Id].Shift == w.Shift && pg.Workers[w.Id].Role == w.Role),
+    "Mechaniker und Reinigungskräfte werden gespeichert");
+pRestored.Advance(2);
+Check(pRestored.People.Count > 0, "nach dem Laden ist das Personal wieder da");
 
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

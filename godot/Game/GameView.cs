@@ -114,6 +114,8 @@ public partial class GameView : Node
     }
 
     /// <summary>Switch from the map to the 3D yard editor of a depot (the simulation keeps running).</summary>
+    public DepotView.DepotEditor? DepotEditor => _depotEditor;
+
     public void OpenDepotEditor(int depotId)
     {
         if (_depotEditor != null || !Game.Depots.TryGetValue(depotId, out var depot)) return;

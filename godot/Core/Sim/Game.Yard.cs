@@ -14,7 +14,7 @@ public sealed partial class Game
     public static bool InYard(Vehicle v) => v.State is VehicleState.Depot or VehicleState.Yard;
 
     /// <summary>Leaving the yard to start service on a line.</summary>
-    public static bool LeavingYard(Vehicle v) => v.State == VehicleState.Yard && v.Task == YardTask.Exit && v.ExitThen == DeadheadTarget.Line;
+    public static bool LeavingYard(Vehicle v) => v.State == VehicleState.Yard && v.Task is YardTask.Exit or YardTask.WaitDriver && v.ExitThen == DeadheadTarget.Line;
 
     private PlacedModule? ModuleAt(Depot d, int x, int y) =>
         d.Layout.Modules.FirstOrDefault(m => m.X == x && m.Y == y);
@@ -134,6 +134,11 @@ public sealed partial class Game
 
     private void StepYard(Vehicle v, double dt)
     {
+        if (v.Task == YardTask.WaitDriver)
+        {
+            WaitForDriver(v, dt);
+            return;
+        }
         var path = v.YardPath;
         if (path == null || v.YardIdx >= path.Count - 1)
         {
@@ -263,6 +268,16 @@ public sealed partial class Game
     private void YardRedirect(Vehicle v, DeadheadTarget to)
     {
         var d = Depots[v.DepotId];
+        if (v.Task == YardTask.WaitDriver)
+        {
+            v.ExitThen = to;
+            if (to == DeadheadTarget.Line) return;
+            // not needed after all: stay parked, the driver goes back to the break room
+            v.Task = YardTask.None;
+            v.State = VehicleState.Depot;
+            ReleaseDriver(v);
+            return;
+        }
         if (v.Task == YardTask.Exit)
         {
             if (to == DeadheadTarget.Line) { v.ExitThen = DeadheadTarget.Line; return; }
@@ -284,12 +299,12 @@ public sealed partial class Game
         {
             foreach (var w in d.Layout.Modules.Where(m => m.Type == ModuleType.Workshop && d.Layout.IsConnected(m, reach)))
                 for (int b = 0; b < BaysPerWorkshop; b++)
-                    if (!Busy(w, b)) return (w, b, YardTask.ToWorkshop);
+                    if (!Busy(w, b) && Staffed(d, w, b)) return (w, b, YardTask.ToWorkshop);
         }
         if (v.Cleanliness < 0.9)
         {
             foreach (var w in d.Layout.Modules.Where(m => m.Type == ModuleType.Wash && d.Layout.IsConnected(m, reach)))
-                if (!Busy(w, 0)) return (w, 0, YardTask.ToWash);
+                if (!Busy(w, 0) && Staffed(d, w, 0)) return (w, 0, YardTask.ToWash);
         }
         return (ModuleAt(d, v.SpotX, v.SpotY), 0, YardTask.ToSpot);
     }
@@ -314,6 +329,7 @@ public sealed partial class Game
             {
                 if (v.Bay == YardBay.Workshop)
                 {
+                    if (!AtWork(d, v.BayX, v.BayY, v.BayIndex)) continue; // no mechanic at work in this lane right now
                     double gain = Math.Min(1 - v.Condition, RepairPerHour * dt / 3600);
                     v.Condition += gain;
                     double c = gain * 100 * v.Def.RepairCostPerPercent;
@@ -324,6 +340,7 @@ public sealed partial class Game
                 }
                 else if (v.Bay == YardBay.Wash)
                 {
+                    if (!AtWork(d, v.BayX, v.BayY, 0)) continue; // nobody operating the wash
                     v.Cleanliness = Math.Min(1, v.Cleanliness + dt / (WashMinutes * 60));
                     d.Washing++;
                     if (v.Cleanliness >= 0.999) GoOnFromBay(d, v);
@@ -341,6 +358,7 @@ public sealed partial class Game
                 charged.Add(v);
             }
             d.Charging = charged.Count;
+            InteriorCleaning(d, dt);
 
             // Parked vehicles that need service drive to a free bay
             foreach (var v in home.Where(v => v.Bay == YardBay.Spot && (v.Condition < 0.95 || v.Cleanliness < 0.9)))

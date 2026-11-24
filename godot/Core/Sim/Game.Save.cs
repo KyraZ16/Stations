@@ -19,6 +19,8 @@ public sealed class SaveData
     public List<LineDto> Lines { get; set; } = new();
     public List<VehicleDto> Vehicles { get; set; } = new();
     public List<DriverDto>? Drivers { get; set; }
+    /// <summary>Mechanics and cleaners (null in saves from before yard staff).</summary>
+    public List<WorkerDto>? Workers { get; set; }
     /// <summary>Midpoints of road segments with tram track.</summary>
     public List<double[]>? Tracks { get; set; }
     public List<DayStats> History { get; set; } = new();
@@ -60,6 +62,15 @@ public sealed class SaveData
         public int Breakdowns { get; set; }
         public double BoughtAt { get; set; }
         public double Km { get; set; }
+    }
+
+    public sealed class WorkerDto
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public int DepotId { get; set; }
+        public StaffRole Role { get; set; }
+        public ShiftId Shift { get; set; }
     }
 
     public sealed class DriverDto
@@ -110,6 +121,7 @@ public sealed partial class Game
                 BoughtAt = v.BoughtAt, Km = v.KmTotal,
             }).ToList(),
             Drivers = Drivers.Values.Select(d => new SaveData.DriverDto { Id = d.Id, Name = d.Name, DepotId = d.DepotId }).ToList(),
+            Workers = Workers.Values.Select(w => new SaveData.WorkerDto { Id = w.Id, Name = w.Name, DepotId = w.DepotId, Role = w.Role, Shift = w.Shift }).ToList(),
             Tracks = Tracks.Select(s => new[]
             {
                 Math.Round((g.Vx[g.SegA[s]] + g.Vx[g.SegB[s]]) / 2, 1),
@@ -192,6 +204,23 @@ public sealed partial class Game
                     g.Drivers[id] = new Driver { Id = id, Name = Staff.RandomName(g.Rng), DepotId = depot.Id };
                 }
             }
+        }
+        if (data.Workers != null)
+        {
+            foreach (var w in data.Workers)
+                if (g.Depots.ContainsKey(w.DepotId))
+                    g.Workers[w.Id] = new Worker { Id = w.Id, Name = w.Name, DepotId = w.DepotId, Role = w.Role, Shift = w.Shift };
+        }
+        else
+        {
+            // Saves from before yard staff: workshops and wash bays get their crews (free of charge)
+            foreach (var depot in g.Depots.Values)
+                foreach (var role in new[] { StaffRole.Mechanic, StaffRole.Cleaner })
+                    for (int i = 0; i < g.WorkerDemand(depot.Id, role); i++)
+                    {
+                        int id = g._nextId++;
+                        g.Workers[id] = new Worker { Id = id, Name = Staff.RandomName(g.Rng), DepotId = depot.Id, Role = role, Shift = (ShiftId)(i % 3) };
+                    }
         }
         foreach (var d in g.Depots.Values) g.EnsureHomeSpots(d);
         // Vehicles start in the depot; the dispatcher sends them out per timetable.

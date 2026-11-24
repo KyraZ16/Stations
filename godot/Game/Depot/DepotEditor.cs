@@ -22,6 +22,13 @@ public partial class DepotEditor : Node3D
     private Camera3D _cam = null!;
     private Node3D _modulesRoot = null!;
     private Node3D _vehiclesRoot = null!;
+    private Node3D _peopleRoot = null!;
+    private Label3D _hoverLabel = null!;
+    private Vector2 _mouse = new(-1000, -1000);
+    /// <summary>Interior view: ceilings, upper storeys and hall roofs hidden (also automatic when zoomed in close).</summary>
+    private bool _interior;
+    private readonly List<Node3D> _roofs = new();
+    private readonly List<Label3D> _buildingLabels = new();
     private MeshInstance3D _ghost = null!;
     private StandardMaterial3D _ghostMat = null!;
     private MeshInstance3D _grid = null!;
@@ -53,6 +60,15 @@ public partial class DepotEditor : Node3D
         AddChild(_modulesRoot);
         _vehiclesRoot = new Node3D();
         AddChild(_vehiclesRoot);
+        _peopleRoot = new Node3D();
+        AddChild(_peopleRoot);
+        _hoverLabel = new Label3D
+        {
+            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 44, PixelSize = 0.012f, NoDepthTest = true,
+            Modulate = Colors.White, OutlineSize = 10, OutlineModulate = new Color(0, 0, 0, 0.8f), Visible = false,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
+        };
+        AddChild(_hoverLabel);
 
         _ghostMat = new StandardMaterial3D { Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
         _ghost = new MeshInstance3D { Mesh = new BoxMesh(), MaterialOverride = _ghostMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Visible = false };
@@ -262,6 +278,8 @@ public partial class DepotEditor : Node3D
     {
         foreach (var c in _modulesRoot.GetChildren()) c.QueueFree();
         _brushes.Clear();
+        _roofs.Clear();
+        _buildingLabels.Clear();
         var reach = L.Reachable();
         var warn = Mat("d8a49c");
         foreach (var m in L.Modules)
@@ -307,19 +325,40 @@ public partial class DepotEditor : Node3D
                 }
                 case ModuleType.Office:
                 {
-                    var b = _props.Office(new Vector3(fp.X - 0.8f, (float)def.Height, fp.Z - 0.8f), ok ? "d9cbb0" : "d8a49c");
+                    var b = _props.Office(new Vector3(fp.X - 0.8f, (float)def.Height, fp.Z - 0.8f), ok ? "d9cbb0" : "d8a49c", out var upper);
                     b.Position = ground;
+                    var door = L.OfficeDoor(m, reach).Dir;
+                    b.Rotation = new Vector3(0, Mathf.Atan2(door.X, door.Y), 0); // the door faces the driveway
                     node.AddChild(b);
+                    _roofs.Add(upper);
                     break;
                 }
                 case ModuleType.Workshop or ModuleType.Wash:
                 {
                     bool wash = m.Type == ModuleType.Wash;
                     var hall = _props.Hall(new Vector3(fp.X - 0.6f, (float)def.Height, fp.Z - 0.6f), vertical,
-                        ok ? (wash ? "3f7fd0" : "c9852e") : "d8a49c", wash, out var brushes);
+                        ok ? (wash ? "3f7fd0" : "c9852e") : "d8a49c", wash, out var brushes, out var roof);
                     hall.Position = ground;
                     node.AddChild(hall);
+                    _roofs.Add(roof);
                     foreach (var br in brushes) _brushes.Add((br, m.X, m.Y));
+                    if (wash)
+                    {
+                        var (wx, wy, wa) = L.WashPost(m);
+                        var desk = _props.WashDesk();
+                        // the desk stands in front of the operator
+                        desk.Position = new Vector3((float)(wx + Math.Cos(wa) * 0.55), 0, (float)(wy + Math.Sin(wa) * 0.55));
+                        desk.Rotation = new Vector3(0, -(float)wa, 0);
+                        node.AddChild(desk);
+                    }
+                    else
+                    {
+                        var (tx, ty) = L.WorkshopTrolley(m);
+                        var trolley = _props.Trolley();
+                        trolley.Position = new Vector3((float)tx, 0, (float)ty);
+                        trolley.Rotation = new Vector3(0, vertical ? Mathf.Pi / 2 : 0, 0);
+                        node.AddChild(trolley);
+                    }
                     break;
                 }
                 case ModuleType.Charger:
@@ -333,12 +372,14 @@ public partial class DepotEditor : Node3D
             }
             if (m.Type is ModuleType.Office or ModuleType.Workshop or ModuleType.Wash)
             {
-                node.AddChild(new Label3D
+                var label = new Label3D
                 {
                     Text = def.Name, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 64, PixelSize = 0.02f,
                     Position = ground + new Vector3(0, (float)def.Height + 2.2f, 0), Modulate = Colors.White, OutlineSize = 12,
                     OutlineModulate = new Color(0, 0, 0, 0.7f), NoDepthTest = true,
-                });
+                };
+                node.AddChild(label);
+                _buildingLabels.Add(label);
             }
             if (!ok && m.Type != ModuleType.Road)
             {
@@ -399,6 +440,133 @@ public partial class DepotEditor : Node3D
         }
     }
 
+    private sealed class PersonView
+    {
+        public required Props.Figure Fig;
+    }
+
+    private readonly Dictionary<int, PersonView> _peopleNodes = new();
+
+    /// <summary>Staff on the grounds: walking, sitting in the break room, working at the lanes and the wash.</summary>
+    private void UpdatePeople(double delta)
+    {
+        var present = new HashSet<int>();
+        float t = (float)(Time.GetTicksMsec() / 1000.0);
+        foreach (var p in Game.People.Values)
+        {
+            if (p.DepotId != Depot.Id || p.Hidden) continue;
+            present.Add(p.Id);
+            if (!_peopleNodes.TryGetValue(p.Id, out var view))
+            {
+                var fig = _props.Person(p.Role, p.Id);
+                _peopleRoot.AddChild(fig.Root);
+                fig.Root.Rotation = new Vector3(0, -(float)p.Ang, 0);
+                view = new PersonView { Fig = fig };
+                _peopleNodes[p.Id] = view;
+            }
+            var f = view.Fig;
+            f.Root.Position = new Vector3((float)p.X, 0, (float)p.Y);
+            float yaw = Mathf.LerpAngle(f.Root.Rotation.Y, -(float)p.Ang, Mathf.Min(1, (float)delta * 10));
+            f.Root.Rotation = new Vector3(0, yaw, 0);
+
+            bool walking = p.Act == PersonAct.Walking;
+            bool seated = p.Act == PersonAct.Resting && p.Seat >= 0 && p.Office != null;
+            float swing = walking ? Mathf.Sin((float)(p.Walked * Mathf.Tau / 1.5)) * 0.5f : 0;
+            float legs = seated ? 1.45f : swing;
+            float arms = p.Act switch
+            {
+                PersonAct.Walking => -swing * 0.8f,
+                PersonAct.Working when p.Role == StaffRole.Mechanic => 1.1f + Mathf.Sin(t * 7 + p.Id) * 0.3f,
+                PersonAct.Working => 0.7f + Mathf.Sin(t * 2 + p.Id) * 0.1f,
+                PersonAct.Changing => 0.5f + Mathf.Sin(t * 4 + p.Id) * 0.4f,
+                _ => seated ? 0.55f : 0.05f,
+            };
+            f.LegL.Rotation = new Vector3(0, 0, legs);
+            f.LegR.Rotation = new Vector3(0, 0, seated ? legs : -legs);
+            f.ArmL.Rotation = new Vector3(0, 0, -arms * (seated || p.Act != PersonAct.Walking ? -1 : 1));
+            f.ArmR.Rotation = new Vector3(0, 0, arms);
+            f.Body.Position = new Vector3(seated ? -0.12f : 0, seated ? -0.42f : 0, 0);
+        }
+        foreach (int id in _peopleNodes.Keys.Where(id => !present.Contains(id)).ToList())
+        {
+            _peopleNodes[id].Fig.Root.QueueFree();
+            _peopleNodes.Remove(id);
+        }
+        UpdateHover();
+    }
+
+    /// <summary>Name and activity of the person under the mouse.</summary>
+    private void UpdateHover()
+    {
+        Person? best = null;
+        float bestD = 26;
+        foreach (var (id, view) in _peopleNodes)
+        {
+            var head = view.Fig.Root.Position + new Vector3(0, 1.2f, 0);
+            if (_cam.IsPositionBehind(head) || !Game.People.TryGetValue(id, out var p)) continue;
+            float d = _cam.UnprojectPosition(head).DistanceTo(_mouse);
+            if (d < bestD)
+            {
+                bestD = d;
+                best = p;
+            }
+        }
+        _hoverLabel.Visible = best != null;
+        if (best == null) return;
+        _hoverLabel.Position = _peopleNodes[best.Id].Fig.Root.Position + new Vector3(0, 2.15f, 0);
+        _hoverLabel.Text = PersonInfo(best);
+    }
+
+    private string PersonInfo(Person p)
+    {
+        string name = Game.Drivers.TryGetValue(p.Id, out var d) ? d.Name : Game.Workers.TryGetValue(p.Id, out var w) ? w.Name : "?";
+        string role = Game.RoleName(p.Role);
+        string shift = Game.Workers.TryGetValue(p.Id, out var ww) ? $" · {Game.ShiftName(ww.Shift)}" : "";
+        string vehicle = p.VehicleId is int vid && Game.Vehicles.TryGetValue(vid, out var v) ? v.Name : "Fahrzeug";
+        bool leaving = p.Goal == PersonGoal.Gate || p.AfterLocker == PersonGoal.Gate;
+        string what = p.Act switch
+        {
+            PersonAct.Walking => p.Goal switch
+            {
+                PersonGoal.Locker => leaving ? "Feierabend: zur Umkleide" : "Dienstbeginn: zur Umkleide",
+                PersonGoal.Seat => "geht in den Pausenraum",
+                PersonGoal.Vehicle => $"geht zu {vehicle}",
+                PersonGoal.Post => p.Role == StaffRole.Mechanic ? "geht an die Arbeit (Werkstatt)" : "geht zur Waschanlage",
+                PersonGoal.Clean => $"geht {vehicle} reinigen",
+                PersonGoal.Gate => "geht nach Hause",
+                _ => "unterwegs",
+            },
+            PersonAct.Changing => leaving ? "zieht sich um (Feierabend)" : "zieht sich um",
+            PersonAct.Working => p.Role == StaffRole.Mechanic ? "repariert" : p.Post != null ? "bedient die Waschanlage" : $"reinigt {vehicle}",
+            PersonAct.Waiting => "wartet auf das nächste Fahrzeug",
+            _ => p.Office != null ? "Pause im Sozialgebäude" : "wartet",
+        };
+        return $"{name}\n{role}{shift}\n{what}";
+    }
+
+    /// <summary>Dev/screenshot helper: interior view, camera distance and focus on the first module of a type.</summary>
+    public void SetView(bool interior, float? dist, ModuleType? focus, float? yaw = null, float? pitch = null)
+    {
+        _interior = interior;
+        if (dist is float d) _dist = d;
+        if (yaw is float y) _yaw = y;
+        if (pitch is float p) _pitch = p;
+        if (focus is ModuleType t && L.Modules.FirstOrDefault(m => m.Type == t) is { } mod)
+            _focus = CellCenter(mod.X + (mod.W - 1) / 2.0, mod.Y + (mod.H - 1) / 2.0);
+        UpdateCamera();
+        RebuildPalette();
+    }
+
+    /// <summary>Hide ceilings and roofs in the interior view or when the camera is close.</summary>
+    private void UpdateRoofs()
+    {
+        bool open = _interior || _dist < 40;
+        foreach (var r in _roofs)
+            if (IsInstanceValid(r)) r.Visible = !open;
+        foreach (var l in _buildingLabels)
+            if (IsInstanceValid(l)) l.Visible = !open; // names would float in the air above the open rooms
+    }
+
     /// <summary>Wash brushes spin while a vehicle stands in that wash bay.</summary>
     private void SpinBrushes(double delta)
     {
@@ -453,6 +621,7 @@ public partial class DepotEditor : Node3D
                 if (b.Pressed && CellAt(b.Position) is { } cell) Apply(cell);
                 break;
             case InputEventMouseMotion m:
+                _mouse = m.Position;
                 if (_orbiting)
                 {
                     _yaw -= m.Relative.X * 0.006f;
@@ -468,6 +637,7 @@ public partial class DepotEditor : Node3D
                 switch (k.Keycode)
                 {
                     case Key.R: _rot = (_rot + 1) % 2; UpdateGhost(); break;
+                    case Key.I: _interior = !_interior; RebuildPalette(); break;
                     case Key.Q: _yaw += 0.3f; UpdateCamera(); break;
                     case Key.E: _yaw -= 0.3f; UpdateCamera(); break;
                     case Key.Escape: Closed?.Invoke(); break;
@@ -527,6 +697,8 @@ public partial class DepotEditor : Node3D
     public override void _Process(double delta)
     {
         UpdateVehicles();
+        UpdatePeople(delta);
+        UpdateRoofs();
         SpinBrushes(delta);
         UpdateDayNight();
         _vehicleTimer += delta;
@@ -614,8 +786,10 @@ public partial class DepotEditor : Node3D
         _toolInfo.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _toolInfo.CustomMinimumSize = new Vector2(226, 0);
         _palette.AddChild(_toolInfo);
+        _palette.AddChild(Ui.Section("Ansicht"));
+        _palette.AddChild(PaletteButton("◫  Innenansicht (I)", _interior, () => { _interior = !_interior; RebuildPalette(); }));
         _palette.AddChild(Ui.Section("Steuerung"));
-        var help = Ui.Label("Linksklick: bauen (Fahrweg: ziehen)\nR: drehen\nRechte Maustaste ziehen: Kamera drehen\nMausrad: zoomen · Q/E: schwenken\nEsc: zurück zur Karte", 12, Ui.Muted);
+        var help = Ui.Label("Linksklick: bauen (Fahrweg: ziehen)\nR: drehen\nRechte Maustaste ziehen: Kamera drehen\nMausrad: zoomen · Q/E: schwenken\nNah heranzoomen oder I: Dächer aus\nMaus über Person: wer und was\nEsc: zurück zur Karte", 12, Ui.Muted);
         _palette.AddChild(help);
     }
 
@@ -652,9 +826,11 @@ public partial class DepotEditor : Node3D
         int vehicles = Game.Vehicles.Values.Count(v => v.DepotId == Depot.Id);
         int home = Game.Vehicles.Values.Count(v => v.DepotId == Depot.Id && Game.InYard(v));
         int drivers = Game.DriversOf(Depot.Id).Count;
+        int staff = Game.StaffCount(Depot.Id);
+        int mech = Game.WorkersOf(Depot.Id, StaffRole.Mechanic).Count, clean = Game.WorkersOf(Depot.Id, StaffRole.Cleaner).Count;
         string spot = Depot.Mode == ModeId.Tram ? "Abstellgleise" : "Stellplätze";
         string service = $"Werkstatt: {Depot.Repairing}   ·   Wäsche: {Depot.Washing}" + (Depot.Chargers > 0 ? $"   ·   Laden: {Depot.Charging}" : "");
         _stats.Text = $"{spot}: {vehicles} / {L.VehicleCapacity(Depot.Mode)} belegt ({home} im Hof)   ·   " +
-                      $"Fahrer: {drivers} / {L.DriverCapacity()}   ·   {service}   ·   {Util.Money(Game.Money)}";
+                      $"Personal: {staff} / {L.DriverCapacity()} ({drivers} Fahrer, {mech} Mechaniker, {clean} Reinigung; {Depot.OnSite} vor Ort)   ·   {service}   ·   {Util.Money(Game.Money)}";
     }
 }
