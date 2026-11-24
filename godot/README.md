@@ -17,9 +17,18 @@ Umzug des Browser-Prototyps (Projektwurzel, TypeScript) nach **Godot 4.7 (.NET) 
   (der erste Lauf lädt OSM-Daten, danach kommen sie aus `Tests/cache/`)
 - **Alles bauen:** `dotnet build Stations.slnx`
 
+## Entwickler-Optionen
+
+Nach `--` auf der Kommandozeile, z. B.
+`Godot_v4.7.2-stable_mono_win64.exe --path godot/Game -- --autostart --demo`:
+
+- `--autostart` startet direkt Hamburg (Sandbox)
+- `--demo` baut ein Beispielnetz und spult auf 08:00 (im Spiel auch per **F9**)
+- `--zoom=3` zoomt hinein, `--shot=bild.png` speichert einen Screenshot und beendet das Spiel
+
 ## Stand
 
 - [x] Kern portiert und getestet (gleiche Kartendaten und Ergebnisse wie im Browser)
-- [ ] Kartenansicht (2D) mit Zoom und Verschieben
+- [x] Kartenansicht (2D): Startbildschirm mit Städten und Ortssuche, Karte mit Zoom/Verschieben, Linien, Gleise, Fahrzeuge, Haltestellen, Kopfleiste, Speichern (F5)
 - [ ] Werkzeuge und Panels (Haltestelle, Linie, Betriebshof, Gleise, Fahrplan, Personal)
 - [ ] Depot-Builder (3D)

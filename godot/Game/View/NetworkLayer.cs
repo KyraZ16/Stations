@@ -1,0 +1,169 @@
+using Godot;
+using Stations.Core;
+using Stations.Core.Sim;
+
+namespace Stations.View;
+
+/// <summary>
+/// Everything the player builds plus the moving vehicles. Redrawn every frame;
+/// sizes are given in screen pixels and converted with the camera zoom.
+/// </summary>
+public partial class NetworkLayer : Node2D
+{
+    public Game Game = null!;
+    /// <summary>Camera zoom in pixels per meter.</summary>
+    public float Zoom = 1;
+    /// <summary>Highlighted line/stop/vehicle/depot id (selection), or null.</summary>
+    public (string Kind, int Id)? Selected;
+
+    private readonly Dictionary<Run, Vector2[]> _runCache = new();
+    private Vector2[] _trackSegs = Array.Empty<Vector2>();
+    private int _trackVersion = -1;
+    private Font _font = null!;
+
+    public override void _Ready() => _font = ThemeDB.FallbackFont;
+
+    public override void _Process(double delta) => QueueRedraw();
+
+    public override void _Draw()
+    {
+        float px = 1 / Zoom; // one screen pixel in world meters
+        DrawTracks(px);
+        DrawLines(px);
+        DrawVehicles(px);
+        DrawDepots(px);
+        DrawStops(px);
+        DrawSetTransform(Vector2.Zero);
+    }
+
+    private void DrawTracks(float px)
+    {
+        if (Game.Tracks.Count == 0) return;
+        if (_trackVersion != Game.TrackVersion)
+        {
+            _trackVersion = Game.TrackVersion;
+            var g = Game.Map.Graph;
+            _trackSegs = Game.Tracks.SelectMany(s => new[]
+            {
+                new Vector2((float)g.Vx[g.SegA[s]], (float)g.Vy[g.SegA[s]]),
+                new Vector2((float)g.Vx[g.SegB[s]], (float)g.Vy[g.SegB[s]]),
+            }).ToArray();
+        }
+        // Wider than a line stroke so the rails stay visible on both sides of a tram line
+        DrawMultiline(_trackSegs, Palette.TrackOuter, Mathf.Max(7.5f, 12 * px));
+        DrawMultiline(_trackSegs, Palette.TrackInner, Mathf.Max(4.5f, 8 * px));
+    }
+
+    private Vector2[] RunPoints(Run run)
+    {
+        if (_runCache.TryGetValue(run, out var pts)) return pts;
+        pts = new Vector2[run.Path.Count];
+        for (int i = 0; i < pts.Length; i++) pts[i] = new Vector2((float)run.Path.Xs[i], (float)run.Path.Ys[i]);
+        if (_runCache.Count > 500) _runCache.Clear(); // runs are replaced when lines are edited
+        _runCache[run] = pts;
+        return pts;
+    }
+
+    private void DrawLines(float px)
+    {
+        foreach (var line in Game.Lines.Values)
+        {
+            bool sel = Selected is ("line", var id) && id == line.Id;
+            bool active = double.IsFinite(Game.Headway(line));
+            var color = new Color(line.Color) { A = active ? 1 : 0.55f };
+            foreach (var run in line.Runs)
+            {
+                var pts = RunPoints(run);
+                if (pts.Length < 2) continue;
+                DrawPolyline(pts, Colors.White, (sel ? 10 : 7) * px);
+                if (active) DrawPolyline(pts, color, (sel ? 6 : 4) * px);
+                else for (int i = 0; i + 1 < pts.Length; i++) DrawDashedLine(pts[i], pts[i + 1], color, 4 * px, 8 * px);
+            }
+        }
+    }
+
+    private void DrawVehicles(float px)
+    {
+        foreach (var v in Game.Vehicles.Values)
+        {
+            if (v.State == VehicleState.Depot) continue;
+            var def = Modes.Get(v.Mode).Vehicle;
+            float len = Mathf.Max((float)def.Length, 15 * px), wid = Mathf.Max((float)def.Width, 7 * px);
+            bool sel = Selected is ("vehicle", var id) && id == v.Id;
+            var line = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? l : null;
+            bool lineColor = line != null && (v.State != VehicleState.Deadhead || v.DeadheadTo == DeadheadTarget.Rejoin);
+            DrawSetTransform(new Vector2((float)v.X, (float)v.Y), (float)v.Ang);
+            var body = new Rect2(-len / 2, -wid / 2, len, wid);
+            DrawRect(body, lineColor ? new Color(line!.Color) : new Color("7d8590"));
+            // Load indicator: white fill grows with occupancy
+            float pad = 1.6f * px, nose = 2.5f * px;
+            float load = Math.Min((float)v.Passengers.Count / def.Capacity, 1);
+            var inner = new Rect2(-len / 2 + pad, -wid / 2 + pad, len - 2 * pad - nose, wid - 2 * pad);
+            DrawRect(inner, new Color(1, 1, 1, 0.35f));
+            if (load > 0) DrawRect(new Rect2(inner.Position, new Vector2(inner.Size.X * load, inner.Size.Y)), Colors.White);
+            // Windscreen marks the driving direction
+            DrawRect(new Rect2(len / 2 - nose, -wid / 2, nose, wid), Palette.Ink);
+            DrawRect(body, sel ? Palette.Highlight : Palette.Ink, false, (sel ? 3 : 1.6f) * px);
+        }
+        DrawSetTransform(Vector2.Zero);
+    }
+
+    private void DrawDepots(float px)
+    {
+        foreach (var d in Game.Depots.Values)
+        {
+            bool sel = Selected is ("depot", var id) && id == d.Id;
+            var pos = new Vector2((float)d.Pos.X, (float)d.Pos.Y);
+            DrawSetTransform(pos, 0, new Vector2(px, px)); // draw in screen pixels
+            var r = new Rect2(-9, -9, 18, 18);
+            DrawRect(r, d.Mode == ModeId.Tram ? new Color("5b3f8c") : new Color("2d3640"));
+            DrawRect(r, sel ? Palette.Highlight : Colors.White, false, 2);
+            DrawString(_font, new Vector2(-9, 5), d.Mode == ModeId.Tram ? "T" : "B", HorizontalAlignment.Center, 18, 12, Colors.White);
+        }
+        DrawSetTransform(Vector2.Zero);
+    }
+
+    private void DrawStops(float px)
+    {
+        float stopR = Mathf.Clamp(Zoom * 6, 4, 8);
+        var lineColor = new Dictionary<int, Color>();
+        foreach (var l in Game.Lines.Values)
+            foreach (int id in l.StopIds) lineColor.TryAdd(id, new Color(l.Color));
+
+        foreach (var s in Game.Stops.Values)
+        {
+            bool sel = Selected is ("stop", var id) && id == s.Id;
+            DrawSetTransform(new Vector2((float)s.Pos.X, (float)s.Pos.Y), 0, new Vector2(px, px));
+            float r = stopR + (sel ? 2 : 0);
+            var ring = lineColor.TryGetValue(s.Id, out var c) ? c : new Color("555555");
+            if (s.Mode == ModeId.Tram)
+            {
+                var rect = new Rect2(-r, -r, 2 * r, 2 * r);
+                DrawRect(rect, Colors.White);
+                DrawRect(rect, ring, false, sel ? 3.5f : 2.5f);
+            }
+            else
+            {
+                DrawCircle(Vector2.Zero, r, Colors.White);
+                DrawArc(Vector2.Zero, r, 0, Mathf.Tau, 24, ring, sel ? 3.5f : 2.5f);
+            }
+            int n = s.Waiting.Count;
+            if (n > 0 && Zoom > 0.25f)
+            {
+                string label = n.ToString();
+                float w = _font.GetStringSize(label, HorizontalAlignment.Left, -1, 11).X + 8;
+                var badge = n > 60 ? new Color("c62828") : n > 25 ? new Color("ef6c00") : new Color("37474f");
+                DrawRect(new Rect2(r + 3, -8, w, 16), badge);
+                DrawString(_font, new Vector2(r + 7, 4), label, HorizontalAlignment.Left, -1, 11, Colors.White);
+            }
+            if (Zoom > 1.1f || sel)
+            {
+                var size = _font.GetStringSize(s.Name, HorizontalAlignment.Left, -1, 11);
+                var at = new Vector2(-size.X / 2, r + 14);
+                DrawStringOutline(_font, at, s.Name, HorizontalAlignment.Left, -1, 11, 4, new Color(1, 1, 1, 0.9f));
+                DrawString(_font, at, s.Name, HorizontalAlignment.Left, -1, 11, new Color("222222"));
+            }
+        }
+        DrawSetTransform(Vector2.Zero);
+    }
+}
