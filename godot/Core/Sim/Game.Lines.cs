@@ -103,7 +103,7 @@ public sealed partial class Game
 
         foreach (var v in Vehicles.Values)
         {
-            if (v.LineId != line.Id || v.State == VehicleState.Depot) continue;
+            if (v.LineId != line.Id || InYard(v)) continue;
             if (v.State == VehicleState.Deadhead && v.DeadheadTo == DeadheadTarget.Depot) continue;
             if (v.State == VehicleState.Deadhead && v.DeadheadTo == DeadheadTarget.Line)
             {
@@ -253,7 +253,8 @@ public sealed partial class Game
 
     /// <summary>Vehicles of the line that are out of the depot and not heading back.</summary>
     public int ActiveVehicles(TransitLine line) =>
-        Vehicles.Values.Count(v => v.LineId == line.Id && v.State is not (VehicleState.Depot or VehicleState.Broken) && !HeadingHome(v));
+        Vehicles.Values.Count(v => v.LineId == line.Id &&
+            ((v.State is not (VehicleState.Depot or VehicleState.Broken or VehicleState.Yard) && !HeadingHome(v)) || LeavingYard(v)));
 
     /// <summary>Vehicles the timetable needs now (looking ahead so they leave the depot in time).</summary>
     public int RequiredVehicles(TransitLine line) => Math.Max(
@@ -304,6 +305,7 @@ public sealed partial class Game
             X = depot.Pos.X, Y = depot.Pos.Y, BoughtAt = Time,
         };
         Vehicles[id] = v;
+        EnsureHomeSpots(depot);
         OnChange();
         return v;
     }
@@ -328,6 +330,7 @@ public sealed partial class Game
         if (d.Layout.CanPlace(type, x, y, rot) is string err) return err;
         if (!Pay(DepotLayout.Def(type).Cost)) return "Nicht genug Geld";
         d.Layout.Modules.Add(new PlacedModule { Type = type, X = x, Y = y, Rot = rot });
+        EnsureHomeSpots(d);
         OnChange();
         return null;
     }
@@ -351,6 +354,7 @@ public sealed partial class Game
             d.Layout.Modules.Add(m);
             return "Dann hätten nicht mehr alle Fahrer Platz";
         }
+        EnsureHomeSpots(d);
         OnChange();
         return null;
     }
@@ -482,10 +486,26 @@ public sealed partial class Game
 
     private void Dispatch(Vehicle v, DeadheadTarget to)
     {
-        if (v.State == VehicleState.Depot && to == DeadheadTarget.Depot) return;
-        if (v.State == VehicleState.Depot && !TakeDriver(v)) return;
+        if (v.State == VehicleState.Depot)
+        {
+            // Parked vehicles first drive out of the yard; the road trip starts at the gate
+            if (to == DeadheadTarget.Depot || !TakeDriver(v)) return;
+            StartExit(v, to);
+            return;
+        }
+        if (v.State == VehicleState.Yard)
+        {
+            YardRedirect(v, to);
+            return;
+        }
+        RoadTrip(v, to, fromDepot: false);
+    }
+
+    /// <summary>Drive on the road network to the line start or back to the depot.</summary>
+    private void RoadTrip(Vehicle v, DeadheadTarget to, bool fromDepot)
+    {
         var depot = Depots[v.DepotId];
-        var from = v.State == VehicleState.Depot ? depot.Pos : SnapFor(v.Mode, v.X, v.Y, 80) ?? depot.Pos;
+        var from = fromDepot ? depot.Pos : SnapFor(v.Mode, v.X, v.Y, 80) ?? depot.Pos;
         var dest = depot.Pos;
         if (to == DeadheadTarget.Line)
         {
@@ -503,7 +523,7 @@ public sealed partial class Game
             ParkInDepot(v);
             return;
         }
-        if (v.State == VehicleState.Depot)
+        if (fromDepot)
         {
             v.X = depot.Pos.X;
             v.Y = depot.Pos.Y;
@@ -519,6 +539,9 @@ public sealed partial class Game
     {
         var depot = Depots[v.DepotId];
         v.State = VehicleState.Depot;
+        v.Task = YardTask.None;
+        v.YardPath = null;
+        v.Bay = YardBay.Spot;
         v.Path = null;
         v.V = 0;
         v.X = depot.Pos.X;
@@ -526,5 +549,6 @@ public sealed partial class Game
         Today.Lost += v.Passengers.Count;
         v.Passengers.Clear();
         ReleaseDriver(v);
+        EnsureHomeSpots(depot);
     }
 }

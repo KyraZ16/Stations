@@ -460,7 +460,7 @@ public partial class SidePanel : PanelContainer
         Add(step);
         foreach (var v in pool)
             Bind(Ui.Row(_box, v.Name, "", () => UI.Select(new("vehicle", v.Id))),
-                () => (v.State == VehicleState.Depot ? (Game.ReadyForService(v) ? "Reserve" : "Wartung") : $"{v.Passengers.Count}/{v.Def.Capacity} · {VehicleStatus(v)}")
+                () => (v.State == VehicleState.Depot && v.Bay == YardBay.Spot ? (Game.ReadyForService(v) ? "Reserve" : "Wartung") : Game.InYard(v) ? VehicleStatus(v) : $"{v.Passengers.Count}/{v.Def.Capacity} · {VehicleStatus(v)}")
                       + $" · {Pct(v.Condition)}");
         Actions().AddChild(Ui.Btn("Linie löschen", UI.DeleteSelected, danger: true));
     }
@@ -557,7 +557,20 @@ public partial class SidePanel : PanelContainer
 
     private static string VehicleStatus(Vehicle v) => v.State switch
     {
-        VehicleState.Depot => "Im Betriebshof",
+        VehicleState.Depot => v.Bay switch
+        {
+            YardBay.Workshop => "In der Werkstatt",
+            YardBay.Wash => "In der Waschanlage",
+            _ => "Im Betriebshof",
+        },
+        VehicleState.Yard => v.Task switch
+        {
+            YardTask.Exit => "Verlässt den Hof",
+            YardTask.Enter => "Fährt in den Hof",
+            YardTask.ToWorkshop => "Fährt zur Werkstatt",
+            YardTask.ToWash => "Fährt zur Waschanlage",
+            _ => "Fährt zum Stellplatz",
+        },
         VehicleState.Deadhead => v.DeadheadTo switch
         {
             DeadheadTarget.Depot => "Fährt zum Betriebshof",
@@ -585,7 +598,7 @@ public partial class SidePanel : PanelContainer
         Bind(kv.Add("Status"), () =>
         {
             var line = v.LineId is int lid && G.Lines.TryGetValue(lid, out var l) ? l : null;
-            if (v.State == VehicleState.Depot && line != null) return "Reserve im Betriebshof";
+            if (v.State == VehicleState.Depot && v.Bay == YardBay.Spot && line != null) return Game.ReadyForService(v) ? "Reserve im Betriebshof" : "Wartet auf Wartung/Laden";
             string st = VehicleStatus(v);
             if (line != null && v.State is VehicleState.Moving or VehicleState.Dwell && v.RunIdx < line.Runs.Count
                 && v.StopIdx < line.Runs[v.RunIdx].StopIds.Count && G.Stops.TryGetValue(line.Runs[v.RunIdx].StopIds[v.StopIdx], out var next))
@@ -623,7 +636,7 @@ public partial class SidePanel : PanelContainer
         var kv = new Ui.KeyValues(_box);
         var spots = kv.Add(d.Mode == ModeId.Tram ? "Abstellgleise (belegt)" : "Stellplätze (belegt)", $"{vs.Count} / {d.Layout.VehicleCapacity(d.Mode)}");
         if (vs.Count >= d.Layout.VehicleCapacity(d.Mode)) spots.AddThemeColorOverride("font_color", Ui.Danger);
-        Bind(kv.Add("Davon im Hof"), () => vs.Count(v => v.State == VehicleState.Depot).ToString());
+        Bind(kv.Add("Davon im Hof"), () => vs.Count(Game.InYard).ToString());
         kv.Add("Fahrerplätze", $"{G.DriversOf(d.Id).Count} / {d.Layout.DriverCapacity()}");
         Bind(kv.Add("Werkstatt / Wäsche / Laden"), () =>
             $"{d.Repairing} / {d.Washing}" + (d.Mode == ModeId.Bus ? $" / {d.Charging}" : ""));

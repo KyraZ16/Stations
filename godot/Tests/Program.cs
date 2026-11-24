@@ -181,8 +181,8 @@ eg.HireMissingDrivers();
 Check(eg.VehiclesOf(eLine).All(v => v.Def.Electric), "Linie kauft ihr Wunschmodell (E-Bus)");
 eg.Advance(86400);
 Check(eg.Vehicles.Values.Any(v => v.Charge < 0.6) && eLine.MaintenanceShortage, "E-Busse ohne Ladestation fallen nach und nach aus");
-Console.WriteLine("  " + (eg.PlaceModule(eDepot, ModuleType.Charger, 17, 8, 0) ?? "Ladestation 1 gebaut"));
-Console.WriteLine("  " + (eg.PlaceModule(eDepot, ModuleType.Charger, 18, 8, 0) ?? "Ladestation 2 gebaut"));
+Console.WriteLine("  " + (eg.PlaceModule(eDepot, ModuleType.Charger, eg.VehiclesOf(eLine)[0].SpotX, 1, 0) ?? "Ladestation 1 gebaut"));
+Console.WriteLine("  " + (eg.PlaceModule(eDepot, ModuleType.Charger, eg.VehiclesOf(eLine)[1].SpotX, 1, 0) ?? "Ladestation 2 gebaut"));
 eg.Advance(6 * 3600);
 var inYard = eg.Vehicles.Values.Where(v => v.State == VehicleState.Depot).ToList();
 Check(inYard.Count > 0 && inYard.All(v => v.Charge > 0.9), "Ladestationen laden die E-Busse im Hof");
@@ -192,6 +192,48 @@ Check(eg.BuyVehicle(eDepot.Id, "gelenkbus") != null, "mit Gelenkbus-Stellplatz k
 var eRestored = Game.Restore(map, SaveData.FromJson(eg.Serialize().ToJson()));
 Check(eRestored.Vehicles.Values.Select(v => (v.ModelId, Math.Round(v.Charge, 3))).SequenceEqual(eg.Vehicles.Values.Select(v => (v.ModelId, Math.Round(v.Charge, 3)))),
     "Modell und Akkustand werden gespeichert");
+
+Console.WriteLine("== Leben im Betriebshof");
+var yg = new Game(map, sandbox: true, seed: 3);
+var yDepot = yg.AddDepot(map.Graph.Snap(-200, -900, 300)!.Value)!;
+var yLine = yg.CreateLine(new List<int>
+{
+    yg.AddStop(map.Graph.Snap(-1600, -600, 200)!.Value)!.Id,
+    yg.AddStop(map.Graph.Snap(400, -600, 200)!.Value)!.Id,
+}, false)!;
+yLine.Timetable.Headways = new double[] { 300, 300, 300, 300, 300 }; // dense: many buses leave at once
+for (int i = 0; i < 8; i++) yg.BuyVehicle(yDepot.Id);
+foreach (var v in yg.Vehicles.Values) yg.AssignVehicle(v.Id, yLine.Id);
+yg.HireDrivers(yDepot.Id, 25);
+var spotsUsed = yg.Vehicles.Values.Select(v => (v.SpotX, v.SpotY)).Distinct().Count();
+Check(spotsUsed == 8 && yg.Vehicles.Values.All(v => v.SpotX >= 0), "jedes Fahrzeug hat einen eigenen Stellplatz");
+bool sawYard = false;
+double lastLeft = 0, maxWait = 0;
+for (int s = 0; s < 600; s++)
+{
+    yg.Advance(1);
+    foreach (var v in yg.Vehicles.Values)
+    {
+        if (v.State == VehicleState.Yard && v.Task == YardTask.Exit) { sawYard = true; maxWait = Math.Max(maxWait, v.YardWait); }
+    }
+    if (yg.Vehicles.Values.Count(v => !Game.InYard(v)) >= yg.RequiredVehicles(yLine) && lastLeft == 0) lastLeft = s;
+}
+Check(sawYard, "Fahrzeuge fahren sichtbar aus dem Hof");
+Check(lastLeft > 0, $"alle {yg.RequiredVehicles(yLine)} benötigten Busse haben den Hof verlassen (nach {lastLeft:F0} s)");
+Check(maxWait > 0, $"an der Einfahrt staut es sich (bis {maxWait:F0} s Wartezeit)");
+
+var worn = yg.Vehicles.Values.First();
+worn.Condition = 0.2; // will go for service at the terminus
+yg.PlaceModule(yDepot, ModuleType.Workshop, 2, 8, 0);
+bool sawWorkshop = false, backHome = false;
+for (int s = 0; s < 6 * 3600; s += 10)
+{
+    yg.Advance(10);
+    if (worn.State == VehicleState.Depot && worn.Bay == YardBay.Workshop) sawWorkshop = true;
+    if (sawWorkshop && worn.Condition > 0.99 && worn.Bay == YardBay.Spot) { backHome = true; break; }
+}
+Check(sawWorkshop, "abgenutzter Bus fährt in die Werkstatt");
+Check(backHome, "nach der Reparatur zurück auf den Stellplatz");
 
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

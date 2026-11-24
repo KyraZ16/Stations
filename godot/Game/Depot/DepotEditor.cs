@@ -217,16 +217,35 @@ public partial class DepotEditor : Node3D
                 {
                     var (c, s) = Footprint(m.X, m.Y, m.W, m.H, (float)def.Height);
                     var body = new Vector3(s.X - 0.6f, s.Y, s.Z - 0.6f);
-                    AddBox(node, c, body, Mat(ok ? def.Color : "d8a49c"));
-                    AddBox(node, c + new Vector3(0, s.Y / 2 + 0.15f, 0), body + new Vector3(0.3f, -s.Y + 0.3f, 0.3f), Mat("6b6660"));
                     if (m.Type is ModuleType.Workshop or ModuleType.Wash)
                     {
-                        // gates on the short sides
-                        bool vertical = m.Rot % 2 == 0;
-                        var door = vertical ? new Vector3(body.X * 0.7f, s.Y * 0.7f, 0.1f) : new Vector3(0.1f, s.Y * 0.7f, body.Z * 0.7f);
-                        var dOff = vertical ? new Vector3(0, -s.Y * 0.15f, body.Z / 2) : new Vector3(body.X / 2, -s.Y * 0.15f, 0);
-                        AddBox(node, c + dOff, door, Mat("3e4752"));
-                        AddBox(node, c - dOff, door, Mat("3e4752"));
+                        // Open hall: pillars, a low side wall and a see-through roof, so vehicles inside stay visible
+                        var wall = Mat(ok ? def.Color : "d8a49c");
+                        float px = body.X / 2 - 0.25f, pz = body.Z / 2 - 0.25f;
+                        foreach (var (sx, sz) in new[] { (-1, -1), (1, -1), (-1, 1), (1, 1) })
+                            AddBox(node, c + new Vector3(sx * px, 0, sz * pz), new Vector3(0.5f, s.Y, 0.5f), wall);
+                        bool vertical = m.H >= m.W;
+                        var side = vertical ? new Vector3(0.3f, s.Y * 0.35f, body.Z) : new Vector3(body.X, s.Y * 0.35f, 0.3f);
+                        var sideOff = vertical ? new Vector3(-px, -s.Y * 0.325f, 0) : new Vector3(0, -s.Y * 0.325f, -pz);
+                        AddBox(node, c + sideOff, side, wall);
+                        var glass = new StandardMaterial3D
+                        {
+                            AlbedoColor = new Color(def.Color) { A = 0.45f }, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Roughness = 0.3f,
+                        };
+                        AddBox(node, c + new Vector3(0, s.Y / 2, 0), new Vector3(body.X + 0.3f, 0.3f, body.Z + 0.3f), glass, shadow: false);
+                        if (m.Type == ModuleType.Wash)
+                        {
+                            // brushes
+                            var brush = Mat("3f7fd0");
+                            var bOff = vertical ? new Vector3(1.7f, 0, 0) : new Vector3(0, 0, 1.7f);
+                            AddBox(node, c + bOff + new Vector3(0, -s.Y * 0.1f, 0), new Vector3(0.6f, s.Y * 0.7f, 0.6f), brush);
+                            AddBox(node, c - bOff + new Vector3(0, -s.Y * 0.1f, 0), new Vector3(0.6f, s.Y * 0.7f, 0.6f), brush);
+                        }
+                    }
+                    else
+                    {
+                        AddBox(node, c, body, Mat(ok ? def.Color : "d8a49c"));
+                        AddBox(node, c + new Vector3(0, s.Y / 2 + 0.15f, 0), body + new Vector3(0.3f, -s.Y + 0.3f, 0.3f), Mat("6b6660"));
                     }
                     if (m.Type == ModuleType.Charger)
                     {
@@ -260,31 +279,51 @@ public partial class DepotEditor : Node3D
         RebuildVehicles();
     }
 
-    /// <summary>Vehicles in the depot stand on the connected spots, in a stable order.</summary>
-    private void RebuildVehicles()
+    private readonly Dictionary<int, (Node3D Node, string Key)> _vehicleNodes = new();
+
+    /// <summary>Kept for callers after layout changes; vehicles follow the simulation every frame.</summary>
+    private void RebuildVehicles() => UpdateVehicles();
+
+    /// <summary>One node per vehicle in the yard, placed at its simulated yard position.</summary>
+    private void UpdateVehicles()
     {
-        foreach (var c in _vehiclesRoot.GetChildren()) c.QueueFree();
-        // Every vehicle of the depot has its own spot (by length); only those at home are shown.
-        var fleet = Game.Vehicles.Values.Where(v => v.DepotId == Depot.Id).OrderBy(v => v.Id).ToList();
-        var spots = L.Assign(fleet.Select(v => v.Def.Length).ToList(), Depot.Mode);
-        for (int i = 0; i < fleet.Count; i++)
+        var present = new HashSet<int>();
+        foreach (var v in Game.Vehicles.Values)
         {
-            var v = fleet[i];
-            if (v.State != VehicleState.Depot || spots[i] is not PlacedModule s) continue;
-            var def = v.Def;
-            var color = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? l.Color : "8d939b";
-            var (c, _) = Footprint(s.X, s.Y, s.W, s.H, 0);
-            bool vertical = s.Rot % 2 == 0;
-            float len = (float)def.Length, wid = (float)def.Width, height = 3.1f;
-            var size = vertical ? new Vector3(wid, height, len) : new Vector3(len, height, wid);
-            var bus = new Node3D();
-            _vehiclesRoot.AddChild(bus);
-            AddBox(bus, c + new Vector3(0, height / 2 + 0.35f, 0), size, Mat(color, 0.5f));
-            // window band and roof
-            var band = vertical ? new Vector3(wid + 0.04f, 0.9f, len - 1.2f) : new Vector3(len - 1.2f, 0.9f, wid + 0.04f);
-            AddBox(bus, c + new Vector3(0, height * 0.72f + 0.35f, 0), band, Mat("2b3440", 0.2f));
-            AddBox(bus, c + new Vector3(0, height + 0.4f, 0), size with { Y = 0.12f } * new Vector3(0.95f, 1, 0.95f), Mat("e8e8e8"));
+            if (v.DepotId != Depot.Id || !Game.InYard(v)) continue;
+            present.Add(v.Id);
+            string color = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? l.Color : "8d939b";
+            string key = $"{color}/{v.ModelId}";
+            if (!_vehicleNodes.TryGetValue(v.Id, out var entry) || entry.Key != key)
+            {
+                entry.Node?.QueueFree();
+                entry = (BuildVehicle(v, color), key);
+                _vehiclesRoot.AddChild(entry.Node);
+                _vehicleNodes[v.Id] = entry;
+            }
+            entry.Node.Position = new Vector3((float)v.YardX, 0, (float)v.YardY);
+            entry.Node.Rotation = new Vector3(0, -(float)v.YardAng, 0);
         }
+        foreach (int id in _vehicleNodes.Keys.Where(id => !present.Contains(id)).ToList())
+        {
+            _vehicleNodes[id].Node.QueueFree();
+            _vehicleNodes.Remove(id);
+        }
+    }
+
+    /// <summary>Simple bus/tram body: length along local X (driving direction), windows and roof.</summary>
+    private Node3D BuildVehicle(Vehicle v, string color)
+    {
+        var def = v.Def;
+        float len = (float)def.Length, wid = (float)def.Width, height = 3.1f;
+        var n = new Node3D();
+        AddBox(n, new Vector3(0, height / 2 + 0.35f, 0), new Vector3(len, height, wid), Mat(color, 0.5f));
+        AddBox(n, new Vector3(0, height * 0.72f + 0.35f, 0), new Vector3(len - 1.2f, 0.9f, wid + 0.04f), Mat("2b3440", 0.2f));
+        AddBox(n, new Vector3(len / 2 - 0.05f, height * 0.6f + 0.35f, 0), new Vector3(0.12f, 1.5f, wid - 0.4f), Mat("2b3440", 0.2f)); // windscreen
+        AddBox(n, new Vector3(0, height + 0.4f, 0), new Vector3(len * 0.95f, 0.12f, wid * 0.95f), Mat("e8e8e8"));
+        if (def.Length > 15) AddBox(n, new Vector3(len * 0.12f, height / 2 + 0.35f, 0), new Vector3(0.5f, height + 0.05f, wid + 0.06f), Mat("3a3d42")); // joint
+        if (def.Electric) AddBox(n, new Vector3(-len * 0.2f, height + 0.6f, 0), new Vector3(len * 0.3f, 0.35f, wid * 0.7f), Mat("7fb8e0")); // batteries
+        return n;
     }
 
     // ---------------------------------------------------------------- camera and input
@@ -403,11 +442,11 @@ public partial class DepotEditor : Node3D
 
     public override void _Process(double delta)
     {
+        UpdateVehicles();
         _vehicleTimer += delta;
         if (_vehicleTimer > 0.5)
         {
             _vehicleTimer = 0;
-            RebuildVehicles();
             RefreshStats();
         }
     }
@@ -525,7 +564,7 @@ public partial class DepotEditor : Node3D
     private void RefreshStats()
     {
         int vehicles = Game.Vehicles.Values.Count(v => v.DepotId == Depot.Id);
-        int home = Game.Vehicles.Values.Count(v => v.DepotId == Depot.Id && v.State == VehicleState.Depot);
+        int home = Game.Vehicles.Values.Count(v => v.DepotId == Depot.Id && Game.InYard(v));
         int drivers = Game.DriversOf(Depot.Id).Count;
         string spot = Depot.Mode == ModeId.Tram ? "Abstellgleise" : "Stellplätze";
         string service = $"Werkstatt: {Depot.Repairing}   ·   Wäsche: {Depot.Washing}" + (Depot.Chargers > 0 ? $"   ·   Laden: {Depot.Charging}" : "");

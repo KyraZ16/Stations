@@ -254,7 +254,7 @@ public partial class Interaction : Node
         double r = PickRadius;
         if (vehicles)
         {
-            var v = Game.Vehicles.Values.Where(v => v.State != VehicleState.Depot)
+            var v = Game.Vehicles.Values.Where(v => !Game.InYard(v))
                 .MinBy(v => Util.Hypot(v.X - x, v.Y - y));
             if (v != null && Util.Hypot(v.X - x, v.Y - y) < r) return new("vehicle", v.Id);
         }

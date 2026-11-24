@@ -151,6 +151,11 @@ public sealed partial class Game
     private void StepVehicle(Vehicle v, double dt)
     {
         if (v.State == VehicleState.Depot) return;
+        if (v.State == VehicleState.Yard)
+        {
+            StepYard(v, dt);
+            return;
+        }
         var def = v.Def;
         double cost = def.CostPerHour * dt / 3600;
         Money -= cost;
@@ -173,7 +178,7 @@ public sealed partial class Game
             switch (v.DeadheadTo)
             {
                 case DeadheadTarget.Depot:
-                    ParkInDepot(v);
+                    ArriveAtDepot(v);
                     break;
                 case DeadheadTarget.Rejoin:
                 {
@@ -427,42 +432,6 @@ public sealed partial class Game
         string where = v.LineId is int lid && Lines.TryGetValue(lid, out var l) ? $" auf Linie {l.Name}" : "";
         Notify($"Panne: {v.Name}{where} ist liegen geblieben", true);
         return true;
-    }
-
-    /// <summary>Workshops repair, wash bays clean and chargers charge the vehicles standing in the depot.</summary>
-    private void ServiceDepots(double dt)
-    {
-        foreach (var d in Depots.Values)
-        {
-            d.Workshops = d.Layout.CountConnected(ModuleType.Workshop);
-            d.WashBays = d.Layout.CountConnected(ModuleType.Wash);
-            d.Chargers = d.Layout.CountConnected(ModuleType.Charger);
-            var home = Vehicles.Values.Where(v => v.DepotId == d.Id && v.State == VehicleState.Depot).ToList();
-
-            var repair = home.Where(v => v.Condition < 0.999).OrderBy(v => v.Condition).Take(d.Workshops * BaysPerWorkshop).ToList();
-            foreach (var v in repair)
-            {
-                double gain = Math.Min(1 - v.Condition, RepairPerHour * dt / 3600);
-                v.Condition += gain;
-                double c = gain * 100 * v.Def.RepairCostPerPercent;
-                Money -= c;
-                Today.Costs += c;
-            }
-            d.Repairing = repair.Count;
-
-            var wash = home.Where(v => v.Cleanliness < 0.999).OrderBy(v => v.Cleanliness).Take(d.WashBays).ToList();
-            foreach (var v in wash) v.Cleanliness = Math.Min(1, v.Cleanliness + dt / (WashMinutes * 60));
-            d.Washing = wash.Count;
-
-            var charge = home.Where(v => v.Def.Electric && v.Charge < 0.999).OrderBy(v => v.Charge).Take(d.Chargers).ToList();
-            foreach (var v in charge) v.Charge = Math.Min(1, v.Charge + dt / (ChargeHours * 3600));
-            d.Charging = charge.Count;
-        }
-        foreach (var l in Lines.Values)
-        {
-            var out_ = Vehicles.Values.Where(v => v.LineId == l.Id && v.State != VehicleState.Depot).ToList();
-            l.Comfort = out_.Count > 0 ? out_.Average(v => v.Cleanliness) : 1;
-        }
     }
 
     // ---------------------------------------------------------------- stats

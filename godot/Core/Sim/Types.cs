@@ -70,7 +70,13 @@ public sealed class Driver
     public int? VehicleId;
 }
 
-public enum VehicleState { Depot, Deadhead, Layover, Moving, Dwell, Broken }
+public enum VehicleState { Depot, Deadhead, Layover, Moving, Dwell, Broken, Yard }
+
+/// <summary>Movement inside the depot yard.</summary>
+public enum YardTask { None, Enter, Exit, ToWorkshop, ToWash, ToSpot }
+
+/// <summary>Where a vehicle stands in the yard.</summary>
+public enum YardBay { Spot, Workshop, Wash }
 
 public enum DeadheadTarget { Line, Depot, Rejoin }
 
@@ -91,6 +97,18 @@ public sealed class Vehicle
     public int Breakdowns;
     public double BoughtAt;
     public double BrokenUntil;
+
+    // Yard: home spot, current bay, movement along a path (yard meters, origin = yard center)
+    public int SpotX = -1, SpotY = -1;
+    public YardBay Bay = YardBay.Spot;
+    public int BayX = -1, BayY = -1, BayIndex;
+    public YardTask Task = YardTask.None;
+    public List<(double X, double Y)>? YardPath;
+    public int YardIdx;
+    public double YardWait;
+    public double YardX, YardY, YardAng;
+    /// <summary>Where to go after leaving the yard.</summary>
+    public DeadheadTarget ExitThen = DeadheadTarget.Line;
     public int DepotId;
     /// <summary>Line the vehicle is assigned to (its pool). It only runs when the timetable needs it.</summary>
     public int? LineId;

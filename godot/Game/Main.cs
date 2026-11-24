@@ -49,6 +49,19 @@ public partial class Main : Node
             game.Advance(3 * 3600); // 05:00 → 08:00, morning peak
         }
         if (_dev.ContainsKey("tooltest")) ToolTest(game, _view!.Interaction);
+        if (_dev.TryGetValue("depot", out var dmode) && game.Depots.Count > 0)
+        {
+            if (dmode == "edit")
+            {
+                // sample edits: wash bay, workshop, Gelenkbus spot and a charger next to a spot
+                var d0 = game.Depots.Values.First();
+                game.PlaceModule(d0, Core.Sim.ModuleType.Road, 16, 8, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Wash, 17, 8, 1);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Workshop, 2, 8, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.LongBusSpot, 18, 0, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Charger, 17, 6, 0);
+            }
+        }
         if (_dev.TryGetValue("days", out var dd) && int.TryParse(dd, out int days)) game.Advance(days * 86400.0);
         if (_dev.TryGetValue("time", out var hh) && double.TryParse(hh, System.Globalization.CultureInfo.InvariantCulture, out double hour))
         {
@@ -59,16 +72,6 @@ public partial class Main : Node
         }
         if (_dev.ContainsKey("depot") && game.Depots.Count > 0)
         {
-            if (_dev["depot"] == "edit")
-            {
-                // sample edits: a connected wash bay and a workshop without access
-                var d0 = game.Depots.Values.First();
-                game.PlaceModule(d0, Core.Sim.ModuleType.Road, 16, 8, 0);
-                game.PlaceModule(d0, Core.Sim.ModuleType.Wash, 17, 8, 1);
-                game.PlaceModule(d0, Core.Sim.ModuleType.Workshop, 2, 9, 0);
-                game.PlaceModule(d0, Core.Sim.ModuleType.LongBusSpot, 18, 0, 0);
-                game.PlaceModule(d0, Core.Sim.ModuleType.Charger, 17, 6, 0);
-            }
             if (_dev["depot"] == "tram") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.Tram).Id);
             else _view!.OpenDepotEditor(game.Depots.Values.First().Id);
         }
@@ -138,7 +141,7 @@ public partial class Main : Node
                 GetTree().Root.FindChild("SidePanel", true, false)?.Call("ShowTab", "timetable");
                 break;
             case "depot": ui.Select(new Selection("depot", game.Depots.Values.First().Id)); break;
-            case "vehicle": ui.Select(new Selection("vehicle", game.Vehicles.Values.First(v => v.State != VehicleState.Depot).Id)); break;
+            case "vehicle": ui.Select(new Selection("vehicle", game.Vehicles.Values.First(v => !Game.InYard(v)).Id)); break;
             case "stop": ui.Select(new Selection("stop", bus.StopIds[1])); break;
             case "track":
                 ui.SetTool(Tool.Track);

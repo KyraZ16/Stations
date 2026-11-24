@@ -51,7 +51,7 @@ public sealed class DepotLayout
         [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 150_000, 7, "d9cbb0", $"Platz für {DriversPerOffice} Fahrer"),
         [ModuleType.Workshop] = new(ModuleType.Workshop, "Werkstatt", 4, 6, 400_000, 9, "9fb3c8", "Repariert 2 Fahrzeuge gleichzeitig (+25 % Zustand pro Stunde)"),
         [ModuleType.Wash] = new(ModuleType.Wash, "Waschanlage", 2, 6, 120_000, 5, "a8d0d8", "Wäscht ein Fahrzeug nach dem anderen (15 min pro Wäsche)"),
-        [ModuleType.Charger] = new(ModuleType.Charger, "Ladestation", 1, 1, 60_000, 2.2, "3fae6a", "Lädt einen E-Bus (voll in 3 Stunden)"),
+        [ModuleType.Charger] = new(ModuleType.Charger, "Ladestation", 1, 1, 60_000, 2.2, "3fae6a", "Direkt neben einen Stellplatz bauen: lädt den E-Bus dort (voll in 3 Stunden)"),
     };
 
     public static ModuleDef Def(ModuleType t) => Defs[t];
@@ -106,10 +106,17 @@ public sealed class DepotLayout
         return seen;
     }
 
-    /// <summary>Is the module connected: spots at a short end, buildings on any side.</summary>
+    private static IEnumerable<(int, int)> Around(PlacedModule m) =>
+        Enumerable.Range(m.X, m.W).SelectMany(i => new[] { (i, m.Y - 1), (i, m.Y + m.H) })
+            .Concat(Enumerable.Range(m.Y, m.H).SelectMany(j => new[] { (m.X - 1, j), (m.X + m.W, j) }));
+
+    /// <summary>Is the module connected: spots at a short end, buildings on any side,
+    /// chargers directly next to a connected parking spot (they charge the vehicle parked there).</summary>
     public bool IsConnected(PlacedModule m, HashSet<(int, int)> reach)
     {
         if (m.Type == ModuleType.Road) return reach.Contains((m.X, m.Y));
+        if (m.Type == ModuleType.Charger)
+            return Around(m).Select(c => ModuleAt(c.Item1, c.Item2)).Any(s => s != null && IsSpot(s.Type) && IsConnected(s, reach));
         IEnumerable<(int, int)> access;
         bool spot = IsSpot(m.Type);
         if (spot && m.Rot % 2 == 0)
@@ -176,6 +183,74 @@ public sealed class DepotLayout
         var reach = Reachable();
         return Modules.Where(m => SpotFor(m.Type, mode) && IsConnected(m, reach)).OrderBy(m => m.Y).ThenBy(m => m.X).ToList();
     }
+
+    // ---------------------------------------------------------------- yard geometry (meters, origin = yard center)
+
+    public (double X, double Y) CellCenter(double x, double y) =>
+        ((x + 0.5) * CellSize - Width * CellSize / 2, (y + 0.5) * CellSize - Height * CellSize / 2);
+
+    /// <summary>Point on the street in front of the gate.</summary>
+    public (double X, double Y) StreetPoint() => (0, Height * CellSize / 2 + 6);
+
+    /// <summary>Cell (in grid units) closest to a yard position.</summary>
+    public (int X, int Y) CellAt(double x, double y) =>
+        ((int)Math.Floor((x + Width * CellSize / 2) / CellSize), (int)Math.Floor((y + Height * CellSize / 2) / CellSize));
+
+    /// <summary>Where a vehicle stands in a module: center (and lane for workshops), heading along the long side.</summary>
+    public (double X, double Y, double Ang) Pose(PlacedModule m, int bay = 0)
+    {
+        var c = CellCenter(m.X + (m.W - 1) / 2.0, m.Y + (m.H - 1) / 2.0);
+        bool vertical = m.H >= m.W;
+        double ang = vertical ? -Math.PI / 2 : 0; // vehicles face away from the gate side
+        if (m.Type == ModuleType.Workshop)
+        {
+            double lane = (bay == 0 ? -1 : 1) * CellSize;
+            c = vertical ? (c.X + lane, c.Y) : (c.X, c.Y + lane);
+        }
+        return (c.X, c.Y, ang);
+    }
+
+    /// <summary>A driveway cell from which the module is entered (null if not connected).</summary>
+    public (int X, int Y)? AccessCell(PlacedModule m, HashSet<(int, int)> reach)
+    {
+        IEnumerable<(int, int)> cand = IsSpot(m.Type)
+            ? (m.H >= m.W
+                ? Enumerable.Range(m.X, m.W).SelectMany(i => new[] { (i, m.Y + m.H), (i, m.Y - 1) })
+                : Enumerable.Range(m.Y, m.H).SelectMany(j => new[] { (m.X + m.W, j), (m.X - 1, j) }))
+            : Around(m);
+        foreach (var c in cand) if (reach.Contains(c)) return c;
+        return null;
+    }
+
+    /// <summary>Shortest driveway path between two drivable cells (4-neighbourhood), or null.</summary>
+    public List<(int X, int Y)>? FindPath((int X, int Y) from, (int X, int Y) to, HashSet<(int, int)> reach)
+    {
+        if (!reach.Contains(from) || !reach.Contains(to)) return null;
+        var prev = new Dictionary<(int, int), (int, int)>();
+        var queue = new Queue<(int, int)>();
+        queue.Enqueue(from);
+        prev[from] = from;
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            if (cur == to) break;
+            var (x, y) = cur;
+            foreach (var n in new[] { (x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1) })
+            {
+                if (prev.ContainsKey(n) || !reach.Contains(n)) continue;
+                prev[n] = cur;
+                queue.Enqueue(n);
+            }
+        }
+        if (!prev.ContainsKey(to)) return null;
+        var path = new List<(int, int)> { to };
+        while (path[^1] != from) path.Add(prev[path[^1]]);
+        path.Reverse();
+        return path;
+    }
+
+    /// <summary>Gate cell closest to a cell.</summary>
+    public (int X, int Y) GateCellNear(int x) => x < Width / 2 ? (Width / 2 - 1, Height - 1) : (Width / 2, Height - 1);
 
     /// <summary>
     /// Starter yard: driveway from the gate to a cross road, parking spots along it and one office.

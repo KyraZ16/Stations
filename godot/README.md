@@ -38,4 +38,6 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] Werkzeuge und Panels: Bus/Tram, Haltestelle, Linie zeichnen und bearbeiten, Betriebshof, Gleise, Abreißen, Einzugsgebiet; Panels für Übersicht mit Hinweisen, Linie (Übersicht/Fahrplan/Strecke), Haltestelle, Fahrzeug, Betriebshof mit Personal
 - [x] Depot-Builder (3D), erste Version: Grundstück mit Raster und Einfahrt, Fahrwege, Stellplätze/Abstellgleise, Sozialgebäude, Werkstatt, Waschanlage; Stellplätze und Gebäude zählen nur mit Anschluss an die Einfahrt; Stellplätze begrenzen Fahrzeuge, Sozialgebäude die Fahrer; geparkte Fahrzeuge sichtbar
 - [x] Wartung und Verschleiß: Zustand sinkt mit den Kilometern (Pannen unter 50 %), Sauberkeit mit der Einsatzzeit (weniger Fahrgäste), Werkstatt repariert, Waschanlage wäscht, Ladestationen laden E-Busse; Disposition schickt nur einsatzbereite Fahrzeuge; Fahrzeugmodelle Solobus, Gelenkbus (langer Stellplatz), E-Bus
-- [ ] Fahrzeuge fahren sichtbar im Hof, echte 3D-Modelle
+- [x] Leben im Betriebshof: Fahrzeuge fahren durch die Einfahrt über die Fahrwege zu ihrem Heim-Stellplatz, in die Werkstatt (2 Spuren), durch die Waschanlage und wieder hinaus; Abstand halten, Vorfahrt bei Gegenverkehr, Stau bei engen Layouts; Ladestationen laden den Bus auf dem Stellplatz daneben
+- [x] Ladescreen mit Schritten, Fortschritt, Abbrechen und Erneut versuchen
+- [ ] Echte 3D-Modelle, U-Bahn, Kampagne

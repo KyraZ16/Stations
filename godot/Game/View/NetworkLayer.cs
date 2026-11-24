@@ -139,7 +139,7 @@ public partial class NetworkLayer : Node2D
     {
         foreach (var v in Game.Vehicles.Values)
         {
-            if (v.State == VehicleState.Depot) continue;
+            if (Game.InYard(v)) continue; // shown in the 3D yard, not on the map
             var def = v.Def;
             float len = Mathf.Max((float)def.Length, 15 * px), wid = Mathf.Max((float)def.Width, 7 * px);
             bool sel = IsSel("vehicle", v.Id);

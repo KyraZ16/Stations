@@ -193,6 +193,7 @@ public sealed partial class Game
                 }
             }
         }
+        foreach (var d in g.Depots.Values) g.EnsureHomeSpots(d);
         // Vehicles start in the depot; the dispatcher sends them out per timetable.
         g._dispatchTimer = DispatchInterval;
         return g;
