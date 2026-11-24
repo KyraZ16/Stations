@@ -5,9 +5,14 @@ import {
 import { RouteResult } from '../map/roadgraph';
 import { Camera } from '../render/camera';
 import { RenderState, Renderer, Selection } from '../render/renderer';
-import { Game, SPEEDS } from '../sim/game';
-import { Stop, Vehicle } from '../sim/types';
+import { DRIVER_HIRE_COST, DRIVER_WAGE_DAY, Game, SHIFT_MAX, SPEEDS } from '../sim/game';
+import {
+  HEADWAY_OPTIONS, PERIODS, fmtHour, periodAt, periodBounds, vehicleHours, vehiclesFor,
+} from '../sim/timetable';
+import { Driver, Stop, TransitLine, Vehicle } from '../sim/types';
 import { SAVE_KEY } from './start';
+
+const fmtShift = (s: number): string => `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')} h`;
 
 /** 'edit' is not in the toolbar: it is entered from the line panel. */
 type Tool = 'select' | 'stop' | 'line' | 'depot' | 'bulldoze' | 'edit';
@@ -394,8 +399,12 @@ export class App {
     this.setTool('select');
     this.select({ kind: 'line', id: line.id });
     if (this.game.depots.size) {
-      this.game.addVehicleToLine(line);
-      this.toast(`Linie ${line.name} erstellt – ein Bus ist unterwegs`);
+      // Equip the line for its default timetable: buses for the peak, drivers for the shifts.
+      this.game.assignMissing(line);
+      const hired = this.game.hireMissingDrivers();
+      const n = this.game.vehiclesOf(line).length;
+      this.toast(`Linie ${line.name} erstellt – ${n} ${n === 1 ? 'Bus' : 'Busse'} zugewiesen` +
+        (hired ? `, ${hired} Fahrer eingestellt` : ''));
     } else {
       this.toast(`Linie ${line.name} erstellt – baue einen Betriebshof, um Busse einzusetzen`);
     }
@@ -550,6 +559,15 @@ export class App {
       }
       case 'sell': g.sellVehicle(id); if (!g.vehicles.has(id)) this.select(null); break;
       case 'to-depot': g.assignVehicle(id, null); break;
+      case 'line-tab': this.lineTab = el.dataset.tab as typeof this.lineTab; break;
+      case 'assign-missing': if (line) g.assignMissing(line); break;
+      case 'hire': g.hireDrivers(id, +(el.dataset.n ?? 1)); break;
+      case 'fire': g.fireDriver(id); break;
+      case 'hire-missing': {
+        const n = g.hireMissingDrivers(Number.isNaN(id) ? undefined : id);
+        this.toast(n ? `${n} Fahrer eingestellt` : 'Es fehlen keine Fahrer');
+        break;
+      }
     }
     this.panelDirty = true;
   }
@@ -580,6 +598,23 @@ export class App {
       case 'draft-circular':
         this.draft.circular = (el as HTMLInputElement).checked;
         break;
+      case 'tt-start':
+      case 'tt-end':
+      case 'tt-hw': {
+        const l = s?.kind === 'line' ? g.lines.get(s.id) : undefined;
+        if (!l) break;
+        const tt = { ...l.timetable, headways: [...l.timetable.headways] };
+        const val = parseFloat(el.value);
+        if (el.dataset.field === 'tt-start') tt.start = val;
+        else if (el.dataset.field === 'tt-end') tt.end = val;
+        else tt.headways[+el.dataset.period!] = val;
+        if (tt.end <= tt.start) {
+          this.toast('Das Betriebsende muss nach dem Betriebsbeginn liegen', 'error');
+          break;
+        }
+        g.setTimetable(l, tt);
+        break;
+      }
     }
     this.panelDirty = true;
     (el as HTMLElement).blur();
@@ -696,9 +731,10 @@ export class App {
         <ol class="steps">
           <li>Baue einen <b>Betriebshof</b> (B)</li>
           <li>Zeichne eine <b>Linie</b> (L) – klicke dafür nacheinander auf Straßen</li>
-          <li>Setze im Linien-Panel weitere <b>Busse</b> ein, um den Takt zu verdichten</li>
+          <li>Passe im Linien-Panel unter <b>Fahrplan</b> Betriebszeit und Takt an</li>
           <li>Prüfe mit <b>Einzugsgebiet</b> (C), welche Häuser erschlossen sind</li>
         </ol>` : ''}
+      ${this.warningsHtml()}
       <h3>Linien</h3>
       ${lines.map((l) => `
         <div class="row" data-act="select-line" data-id="${l.id}">
@@ -712,6 +748,24 @@ export class App {
         const n = [...g.vehicles.values()].filter((v) => v.depotId === d.id).length;
         return `<div class="row" data-act="select-depot" data-id="${d.id}">▣ ${escapeHtml(d.name)}<span class="meta">${n} Fahrzeuge</span></div>`;
       }).join('') || '<div class="hint">Noch kein Betriebshof.</div>'}`;
+  }
+
+  private warningsHtml(): string {
+    const g = this.game;
+    const items: string[] = [];
+    for (const l of g.lines.values()) {
+      for (const w of this.lineWarnings(l)) {
+        items.push(`<div class="row warn-row" data-act="select-line" data-id="${l.id}">
+          <span class="badge" style="background:${l.color}">${escapeHtml(l.name)}</span>${w}</div>`);
+      }
+    }
+    for (const d of g.depots.values()) {
+      const missing = g.driverDemand(d.id) - g.driversOf(d.id).length;
+      if (missing > 0) {
+        items.push(`<div class="row warn-row" data-act="select-depot" data-id="${d.id}">▣ ${escapeHtml(d.name)}: ${missing} Fahrer fehlen</div>`);
+      }
+    }
+    return items.length ? `<h3>Hinweise</h3>${items.join('')}` : '';
   }
 
   private draftHtml(): string {
@@ -757,49 +811,133 @@ export class App {
       <div class="actions"><button class="btn danger" data-act="delete">Abreißen</button></div>`;
   }
 
+  private lineTab: 'overview' | 'timetable' | 'stops' = 'overview';
+
+  /** Problems of a line the player should fix, as short texts. */
+  private lineWarnings(l: TransitLine): string[] {
+    const g = this.game;
+    const w: string[] = [];
+    if (!g.depots.size) w.push('Kein Betriebshof – baue einen, um Busse einzusetzen');
+    const missing = g.peakVehicles(l) - g.vehiclesOf(l).length;
+    if (missing > 0) w.push(`${missing} ${missing === 1 ? 'Bus fehlt' : 'Busse fehlen'} für den Fahrplan`);
+    if (l.driverShortage) w.push('Fahrermangel – Busse bleiben im Betriebshof');
+    return w;
+  }
+
   private lineHtml(id: number): string {
     const g = this.game;
     const l = g.lines.get(id)!;
+    const warnings = this.lineWarnings(l);
+    const tab = (t: typeof this.lineTab, label: string) =>
+      `<button data-act="line-tab" data-tab="${t}" class="${this.lineTab === t ? 'on' : ''}">${label}</button>`;
+    const body = this.lineTab === 'timetable' ? this.lineTimetableHtml(l)
+      : this.lineTab === 'stops' ? this.lineStopsHtml(l) : this.lineOverviewHtml(l);
+    return `
+      <h2><span class="badge" style="background:${l.color}">${escapeHtml(l.name)}</span> ${MODES[l.mode].name}linie
+        <button class="close" data-act="close">×</button></h2>
+      ${warnings.map((t) => `<div class="warn">⚠ ${t}</div>`).join('')}
+      <div class="tabs">${tab('overview', 'Übersicht')}${tab('timetable', 'Fahrplan')}${tab('stops', 'Strecke')}</div>
+      ${body}`;
+  }
+
+  private lineOverviewHtml(l: TransitLine): string {
+    const g = this.game;
     const vs = g.vehiclesOf(l);
-    const active = vs.filter((v) => !(v.state === 'deadhead' && v.deadheadTo === 'depot')).length;
     const hw = g.headway(l);
     const len = l.runs.reduce((a, r) => a + r.path.length, 0);
     const cap = MODES[l.mode].vehicle.capacity;
     const capPerHour = isFinite(hw) ? (3600 / hw) * cap : 0;
+    const pi = periodAt(l.timetable, g.time);
     return `
-      <h2><span class="badge" style="background:${l.color}">${escapeHtml(l.name)}</span> ${MODES[l.mode].name}linie
-        <button class="close" data-act="close">×</button></h2>
       <input type="text" data-field="name" value="${escapeHtml(l.name)}">
       <div class="swatches" style="margin-top:8px">
         ${LINE_COLORS.map((c) => `<button data-act="color" data-color="${c}" class="${c === l.color ? 'on' : ''}" style="background:${c}"></button>`).join('')}
       </div>
-      <h3>Fahrzeuge</h3>
-      <div class="stepper">
-        <button class="btn" data-act="veh-remove" ${active ? '' : 'disabled'}>−</button>
-        <b>${active}</b>
-        <button class="btn" data-act="veh-add">+</button>
-        <span class="hint">${g.depots.size ? `Takt: <b>${isFinite(hw) ? 'alle ' + fmtDuration(hw) : '–'}</b>` : 'Erst Betriebshof bauen'}</span>
-      </div>
-      <div class="kv" style="margin-top:10px">
-        <span>Haltestellen</span><span>${l.stopIds.length}</span>
-        <span>Streckenlänge (Umlauf)</span><span>${fmtDist(len)}</span>
-        <span>Umlaufzeit</span><span>${fmtDuration(l.cycleTime)}</span>
+      <div class="kv" style="margin-top:12px">
+        <span>Jetzt</span><span>${pi < 0 ? 'Betriebsruhe' : PERIODS[pi].name}</span>
+        <span>Takt aktuell</span><span>${isFinite(hw) ? 'alle ' + fmtDuration(hw) : '–'}</span>
+        <span>Busse im Einsatz</span><span>${g.activeVehicles(l)} / ${g.requiredVehicles(l)} benötigt</span>
         <span>Kapazität</span><span>${fmtNum(capPerHour)} Plätze/h</span>
+        <span>Umlaufzeit</span><span>${fmtDuration(l.cycleTime)}</span>
+        <span>Streckenlänge (Umlauf)</span><span>${fmtDist(len)}</span>
         <span>Einstiege heute</span><span>${fmtNum(l.passengersToday)}</span>
         <span>Einnahmen heute</span><span>${fmtMoney(l.revenueToday)}</span>
       </div>
-      <label class="toggle" style="margin-top:6px"><input type="checkbox" data-field="circular" ${l.circular ? 'checked' : ''}> Ringlinie</label>
-      <div class="actions"><button class="btn" data-act="edit-line" data-id="${l.id}">✎ Strecke bearbeiten</button></div>
-      <h3>Haltestellen</h3>
-      <div class="stoplist">
+      <h3>Fahrzeugpool</h3>
+      <div class="stepper">
+        <button class="btn" data-act="veh-remove" ${vs.length ? '' : 'disabled'}>−</button>
+        <b>${vs.length}</b>
+        <button class="btn" data-act="veh-add">+</button>
+        <span class="hint">Spitzenbedarf: <b>${g.peakVehicles(l)}</b></span>
+      </div>
+      ${vs.map((v) => `<div class="row" data-act="select-vehicle" data-id="${v.id}">🚌 ${escapeHtml(v.name)}
+        <span class="meta">${v.state === 'depot' ? 'Reserve' : `${v.passengers.length}/${cap} · ${this.vehicleStatus(v)}`}</span></div>`).join('')}
+      <div class="actions"><button class="btn danger" data-act="delete">Linie löschen</button></div>`;
+  }
+
+  private lineTimetableHtml(l: TransitLine): string {
+    const g = this.game;
+    const tt = l.timetable;
+    const cur = periodAt(tt, g.time);
+    const startOpts = [4, 4.5, 5, 5.5, 6, 6.5, 7, 8];
+    const endOpts = [19, 20, 21, 22, 23, 24, 24.5, 25, 26];
+    const hwSelect = (i: number) => `
+      <select data-field="tt-hw" data-period="${i}">
+        <option value="0" ${tt.headways[i] === 0 ? 'selected' : ''}>kein Betrieb</option>
+        ${HEADWAY_OPTIONS.map((s) => `<option value="${s}" ${tt.headways[i] === s ? 'selected' : ''}>alle ${s % 60 ? (s / 60).toFixed(1).replace('.', ',') : s / 60} min</option>`).join('')}
+      </select>`;
+    const missing = g.peakVehicles(l) - g.vehiclesOf(l).length;
+    return `
+      <div class="tt-hours">
+        Betrieb von
+        <select data-field="tt-start">${startOpts.map((h) => `<option value="${h}" ${h === tt.start ? 'selected' : ''}>${fmtHour(h)}</option>`).join('')}</select>
+        bis
+        <select data-field="tt-end">${endOpts.map((h) => `<option value="${h}" ${h === tt.end ? 'selected' : ''}>${fmtHour(h)}${h >= 24 ? ' Uhr (+1)' : ''}</option>`).join('')}</select>
+      </div>
+      <table class="tt">
+        <tr><th>Zeitraum</th><th>Takt</th><th>Busse</th></tr>
+        ${PERIODS.map((p, i) => {
+          const b = periodBounds(tt, i);
+          if (!b) return '';
+          return `<tr class="${i === cur ? 'cur' : ''}">
+            <td>${p.name}<small>${fmtHour(b[0])}–${fmtHour(b[1])}</small></td>
+            <td>${hwSelect(i)}</td>
+            <td class="num">${tt.headways[i] ? vehiclesFor(l.cycleTime, tt.headways[i]) : '–'}</td>
+          </tr>`;
+        }).join('')}
+      </table>
+      <div class="kv" style="margin-top:10px">
+        <span>Umlaufzeit</span><span>${fmtDuration(l.cycleTime)}</span>
+        <span>Spitzenbedarf</span><span>${g.peakVehicles(l)} Busse</span>
+        <span>Im Pool</span><span>${g.vehiclesOf(l).length} Busse</span>
+        <span>Fahrzeugstunden/Tag</span><span>${fmtNum(vehicleHours(tt, l.cycleTime))} h</span>
+      </div>
+      <div class="actions">
+        ${missing > 0 ? `<button class="btn primary" data-act="assign-missing">${missing === 1 ? 'Fehlenden Bus' : `${missing} fehlende Busse`} zuweisen</button>` : ''}
+        <button class="btn" data-act="hire-missing">Fehlende Fahrer einstellen</button>
+      </div>
+      <div class="hint" style="margin-top:8px">Die Disposition schickt nur so viele Busse aus dem Pool los, wie der Takt braucht.
+        Überzählige Busse fahren an der Endhaltestelle zurück in den Betriebshof.</div>`;
+  }
+
+  private lineStopsHtml(l: TransitLine): string {
+    const g = this.game;
+    return `
+      <label class="toggle"><input type="checkbox" data-field="circular" ${l.circular ? 'checked' : ''}> Ringlinie</label>
+      <div class="actions" style="margin-top:4px"><button class="btn" data-act="edit-line" data-id="${l.id}">✎ Strecke bearbeiten</button></div>
+      <div class="stoplist" style="margin-top:8px">
         ${l.stopIds.map((sid) => {
           const s = g.stops.get(sid);
           return s ? `<div class="row" data-act="select-stop" data-id="${sid}">${escapeHtml(s.name)}<span class="meta">${s.waiting.length} wartend</span></div>` : '';
         }).join('')}
-      </div>
-      ${vs.length ? `<h3>Busse</h3>${vs.map((v) => `<div class="row" data-act="select-vehicle" data-id="${v.id}">🚌 ${escapeHtml(v.name)}
-        <span class="meta">${v.passengers.length}/${cap} · ${VEHICLE_STATE[v.state]}</span></div>`).join('')}` : ''}
-      <div class="actions"><button class="btn danger" data-act="delete">Linie löschen</button></div>`;
+      </div>`;
+  }
+
+  private vehicleStatus(v: Vehicle): string {
+    if (v.state === 'deadhead') {
+      return v.deadheadTo === 'depot' ? 'Fährt zum Betriebshof' : v.deadheadTo === 'rejoin' ? 'Umleitung' : 'Fährt zum Linienstart';
+    }
+    return VEHICLE_STATE[v.state];
   }
 
   private editHtml(id: number): string {
@@ -835,8 +973,9 @@ export class App {
     const v = g.vehicles.get(id)!;
     const def = MODES[v.mode].vehicle;
     const line = v.lineId !== null ? g.lines.get(v.lineId) : undefined;
-    let status = VEHICLE_STATE[v.state];
-    if (v.state === 'deadhead') status = v.deadheadTo === 'depot' ? 'Fährt zum Betriebshof' : 'Fährt zum Linienstart';
+    let status = this.vehicleStatus(v);
+    if (v.state === 'depot' && line) status = 'Reserve im Betriebshof';
+    const drv = v.driverId !== null ? g.drivers.get(v.driverId) : undefined;
     if (line && (v.state === 'moving' || v.state === 'dwell')) {
       const next = g.stops.get(line.runs[v.runIdx].stopIds[v.stopIdx]);
       status += next ? ` – ${v.state === 'moving' ? 'nächster Halt' : ''} ${escapeHtml(next.name)}` : '';
@@ -848,6 +987,7 @@ export class App {
       <div class="kv" style="margin-top:10px">
         <span>Typ</span><span>${def.name}</span>
         <span>Status</span><span style="font-weight:500">${status}</span>
+        <span>Fahrer</span><span style="font-weight:500">${drv ? `${escapeHtml(drv.name)} (${fmtShift(drv.worked)})` : '–'}</span>
         <span>Geschwindigkeit</span><span>${Math.round(v.v * 3.6)} km/h</span>
         <span>Fahrgäste</span><span>${v.passengers.length} / ${def.capacity}</span>
         <span>Laufleistung</span><span>${fmtDist(v.kmTotal * 1000)}</span>
@@ -880,6 +1020,7 @@ export class App {
       <div class="actions">
         <button class="btn primary" data-act="buy" data-id="${id}" ${g.canAfford(def.price) ? '' : 'disabled'}>+ ${def.name} kaufen (${fmtMoney(def.price)})</button>
       </div>
+      ${this.staffHtml(id)}
       <h3>Fahrzeuge</h3>
       ${vs.map((v) => {
         const l = v.lineId !== null ? g.lines.get(v.lineId) : undefined;
@@ -887,5 +1028,38 @@ export class App {
           <span class="meta">${l ? `<span class="badge" style="background:${l.color}">${escapeHtml(l.name)}</span>` : 'frei'}</span></div>`;
       }).join('') || '<div class="hint">Keine Fahrzeuge. Kaufe einen Bus oder nutze „+“ im Linien-Panel.</div>'}
       <div class="actions"><button class="btn danger" data-act="delete">Abreißen</button></div>`;
+  }
+
+  private staffHtml(depotId: number): string {
+    const g = this.game;
+    const ds = g.driversOf(depotId);
+    const onDuty = ds.filter((d) => d.vehicleId !== null);
+    const done = ds.filter((d) => d.vehicleId === null && d.worked >= SHIFT_MAX - 45 * 60);
+    const free = ds.length - onDuty.length - done.length;
+    const demand = g.driverDemand(depotId);
+    const missing = demand - ds.length;
+    const status = (d: Driver) => {
+      if (d.vehicleId !== null) return `im Dienst · ${escapeHtml(g.vehicles.get(d.vehicleId)?.name ?? '')}`;
+      if (d.worked >= SHIFT_MAX - 45 * 60) return 'Feierabend';
+      return d.worked > 0 ? 'Pause' : 'verfügbar';
+    };
+    const shown = [...ds].sort((a, b) => (b.vehicleId !== null ? 1 : 0) - (a.vehicleId !== null ? 1 : 0)).slice(0, 25);
+    return `
+      <h3>Personal</h3>
+      <div class="kv">
+        <span>Fahrer</span><span>${ds.length}</span>
+        <span>Im Dienst / verfügbar / Feierabend</span><span>${onDuty.length} / ${free} / ${done.length}</span>
+        <span>Bedarf (Schätzung)</span><span class="${missing > 0 ? 'neg' : ''}">${demand}</span>
+        <span>Lohnkosten</span><span>${fmtMoney(ds.length * DRIVER_WAGE_DAY)}/Tag</span>
+      </div>
+      <div class="actions">
+        <button class="btn" data-act="hire" data-id="${depotId}" data-n="1">+1 Fahrer</button>
+        <button class="btn" data-act="hire" data-id="${depotId}" data-n="5">+5</button>
+        ${missing > 0 ? `<button class="btn primary" data-act="hire-missing" data-id="${depotId}">${missing} fehlende einstellen</button>` : ''}
+        <button class="btn" data-act="fire" data-id="${depotId}" ${ds.length ? '' : 'disabled'}>−1 entlassen</button>
+      </div>
+      <div class="hint" style="margin-top:4px">Einstellung ${fmtMoney(DRIVER_HIRE_COST)} · Schicht max. 8 h · Ablösung an der Endhaltestelle</div>
+      ${shown.map((d) => `<div class="row small">👤 ${escapeHtml(d.name)}<span class="meta">${status(d)} · ${fmtShift(d.worked)}</span></div>`).join('')}
+      ${ds.length > shown.length ? `<div class="hint">… und ${ds.length - shown.length} weitere</div>` : ''}`;
   }
 }

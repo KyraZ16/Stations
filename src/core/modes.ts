@@ -18,7 +18,7 @@ export interface ModeDef {
     capacity: number;
     maxSpeed: number; // m/s
     price: number;
-    costPerHour: number; // driver and fixed costs while out of the depot
+    costPerHour: number; // vehicle costs while out of the depot (drivers are paid separately)
     costPerKm: number;
     length: number; // m, for drawing
     width: number;
@@ -38,7 +38,7 @@ export const MODES: Record<ModeId, ModeDef> = {
     id: 'bus', name: 'Bus', tier: 'local', icon: '🚌', available: true, infra: 'road',
     vehicle: {
       name: 'Solobus', capacity: 80, maxSpeed: 50 / 3.6, price: 250_000,
-      costPerHour: 45, costPerKm: 1.1, length: 12, width: 2.55,
+      costPerHour: 12, costPerKm: 1.1, length: 12, width: 2.55,
     },
     stopCost: 5_000,
     depotCost: 400_000,

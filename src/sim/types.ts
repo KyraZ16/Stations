@@ -1,6 +1,7 @@
 import { ModeId } from '../core/modes';
 import { RoadPos } from '../map/roadgraph';
 import { Path } from './path';
+import { Timetable } from './timetable';
 
 export interface Stop {
   id: number;
@@ -38,8 +39,20 @@ export interface TransitLine {
   cycleTime: number;
   /** Incremented when the route changes; passenger plans from older versions are invalid. */
   version: number;
+  timetable: Timetable;
+  /** Set by the dispatcher when a vehicle could not leave for lack of a driver. */
+  driverShortage: boolean;
   passengersToday: number;
   revenueToday: number;
+}
+
+export interface Driver {
+  id: number;
+  name: string;
+  depotId: number;
+  /** Seconds worked in the current shift day. */
+  worked: number;
+  vehicleId: number | null;
 }
 
 export type VehicleState = 'depot' | 'deadhead' | 'layover' | 'moving' | 'dwell';
@@ -49,7 +62,9 @@ export interface Vehicle {
   name: string;
   mode: ModeId;
   depotId: number;
+  /** Line the vehicle is assigned to (its pool). It only runs when the timetable needs it. */
   lineId: number | null;
+  driverId: number | null;
   state: VehicleState;
   /** For deadhead trips: where the trip ends. */
   deadheadTo: 'line' | 'depot' | 'rejoin';

@@ -5,8 +5,12 @@ import { MapData } from '../map/mapdata';
 import { RoadPos } from '../map/roadgraph';
 import { Path } from './path';
 import { Router } from './router';
+import { randomName } from './staff';
 import {
-  DayStats, Depot, Passenger, Run, Stop, TransitLine, Vehicle, newDayStats,
+  Timetable, defaultTimetable, peakVehicles, targetHeadway, vehicleHours, vehiclesFor,
+} from './timetable';
+import {
+  DayStats, Depot, Driver, Passenger, Run, Stop, TransitLine, Vehicle, newDayStats,
 } from './types';
 
 export const SPEEDS = [0, 5, 20, 60]; // game seconds per real second
@@ -18,8 +22,18 @@ const TRIPS_PER_RESIDENT = 6;
 const ACCEL = 1.2;
 const BRAKE = 1.0;
 
+/** Max driving time per driver and day. */
+export const SHIFT_MAX = 8 * 3600;
+/** A driver only starts a new trip with at least this much shift time left. */
+const SHIFT_MIN_LEFT = 45 * 60;
+export const DRIVER_WAGE_DAY = 190;
+export const DRIVER_HIRE_COST = 1_500;
+/** Vehicles leave the depot this long before the timetable needs them. */
+const DISPATCH_LEAD = 15 * 60;
+const DISPATCH_INTERVAL = 15;
+
 export interface SaveData {
-  v: 1;
+  v: 1 | 2;
   area: Area;
   time: number;
   money: number;
@@ -28,8 +42,12 @@ export interface SaveData {
   vehicleCounter: number;
   stops: { id: number; name: string; mode: ModeId; x: number; y: number }[];
   depots: { id: number; name: string; mode: ModeId; x: number; y: number }[];
-  lines: { id: number; name: string; color: string; mode: ModeId; stopIds: number[]; circular: boolean }[];
+  lines: {
+    id: number; name: string; color: string; mode: ModeId; stopIds: number[]; circular: boolean;
+    timetable?: Timetable;
+  }[];
   vehicles: { id: number; name: string; mode: ModeId; depotId: number; lineId: number | null }[];
+  drivers?: { id: number; name: string; depotId: number }[];
   history: DayStats[];
 }
 
@@ -65,6 +83,7 @@ export class Game {
   depots = new Map<number, Depot>();
   lines = new Map<number, TransitLine>();
   vehicles = new Map<number, Vehicle>();
+  drivers = new Map<number, Driver>();
 
   today: DayStats;
   history: DayStats[] = [];
@@ -75,6 +94,8 @@ export class Game {
   private routerDirty = true;
   private demandAcc = 0;
   private expireTimer = 0;
+  private dispatchTimer = 0;
+  private headwaySig = '';
   private nextId = 1;
   private vehicleCounter = 0;
   private passengerId = 1;
@@ -189,8 +210,87 @@ export class Game {
       this.onToast('Der Betriebshof hat noch Fahrzeuge. Verkaufe sie zuerst.', 'error');
       return;
     }
+    for (const d of [...this.drivers.values()]) if (d.depotId === id) this.drivers.delete(d.id);
     this.depots.delete(id);
     this.onChange();
+  }
+
+  // ---------------------------------------------------------------- staff
+
+  driversOf(depotId: number): Driver[] {
+    return [...this.drivers.values()].filter((d) => d.depotId === depotId);
+  }
+
+  hireDrivers(depotId: number, n: number): void {
+    if (!this.depots.has(depotId)) return;
+    if (!this.pay(DRIVER_HIRE_COST * n)) return;
+    for (let i = 0; i < n; i++) {
+      const id = this.nextId++;
+      this.drivers.set(id, { id, name: randomName(), depotId, worked: 0, vehicleId: null });
+    }
+    this.onChange();
+  }
+
+  /** Dismiss one off-duty driver (prefers those who already worked today). */
+  fireDriver(depotId: number): void {
+    const off = this.driversOf(depotId).filter((d) => d.vehicleId === null).sort((a, b) => b.worked - a.worked);
+    if (!off.length) {
+      this.onToast('Alle Fahrer sind gerade im Dienst', 'error');
+      return;
+    }
+    this.drivers.delete(off[0].id);
+    this.onChange();
+  }
+
+  private availableDriver(depotId: number): Driver | null {
+    for (const d of this.drivers.values()) {
+      if (d.depotId === depotId && d.vehicleId === null && d.worked < SHIFT_MAX - SHIFT_MIN_LEFT) return d;
+    }
+    return null;
+  }
+
+  private takeDriver(v: Vehicle): boolean {
+    if (v.driverId !== null) return true;
+    const d = this.availableDriver(v.depotId);
+    if (!d) return false;
+    d.vehicleId = v.id;
+    v.driverId = d.id;
+    return true;
+  }
+
+  private releaseDriver(v: Vehicle): void {
+    const d = v.driverId !== null ? this.drivers.get(v.driverId) : undefined;
+    if (d) d.vehicleId = null;
+    v.driverId = null;
+  }
+
+  /**
+   * Estimated drivers a depot needs per day: vehicle hours of the timetables, split by where
+   * the line's vehicles are based, in 8 h shifts plus ~30 % reserve (shifts rarely end exactly at 8 h).
+   */
+  driverDemand(depotId: number): number {
+    let hours = 0;
+    for (const l of this.lines.values()) {
+      const pool = this.vehiclesOf(l);
+      if (!pool.length) continue;
+      const share = pool.filter((v) => v.depotId === depotId).length / pool.length;
+      hours += vehicleHours(l.timetable, l.cycleTime) * share;
+    }
+    return Math.ceil((hours / (SHIFT_MAX / 3600)) * 1.3);
+  }
+
+  /** Hire drivers so every depot covers its estimated demand. Returns how many were hired. */
+  hireMissingDrivers(depotId?: number): number {
+    let hired = 0;
+    for (const d of this.depots.values()) {
+      if (depotId !== undefined && d.id !== depotId) continue;
+      const missing = this.driverDemand(d.id) - this.driversOf(d.id).length;
+      if (missing > 0 && this.canAfford(missing * DRIVER_HIRE_COST)) {
+        this.hireDrivers(d.id, missing);
+        hired += missing;
+      }
+    }
+    return hired;
   }
 
   // ---------------------------------------------------------------- lines
@@ -242,7 +342,7 @@ export class Game {
     const line: TransitLine = {
       id, name: String(n), mode, stopIds: [...stopIds], circular, runs, cycleTime: 0,
       color: LINE_COLORS[(this.lines.size) % LINE_COLORS.length],
-      passengersToday: 0, revenueToday: 0, version: 0,
+      passengersToday: 0, revenueToday: 0, version: 0, timetable: defaultTimetable(), driverShortage: false,
     };
     line.cycleTime = cycleTime(runs);
     this.lines.set(id, line);
@@ -404,12 +504,38 @@ export class Game {
     }
   }
 
-  headway(line: TransitLine): number {
+  /** Vehicles of the line that are out of the depot and not heading back. */
+  activeVehicles(line: TransitLine): number {
     let n = 0;
     for (const v of this.vehicles.values()) {
-      if (v.lineId === line.id && !(v.state === 'deadhead' && v.deadheadTo === 'depot')) n++;
+      if (v.lineId === line.id && v.state !== 'depot' && !(v.state === 'deadhead' && v.deadheadTo === 'depot')) n++;
     }
-    return n ? line.cycleTime / n : Infinity;
+    return n;
+  }
+
+  /** Vehicles the timetable needs now (looking ahead so buses leave the depot in time). */
+  requiredVehicles(line: TransitLine): number {
+    const now = vehiclesFor(line.cycleTime, targetHeadway(line.timetable, this.time));
+    const soon = vehiclesFor(line.cycleTime, targetHeadway(line.timetable, this.time + DISPATCH_LEAD));
+    return Math.max(now, soon);
+  }
+
+  peakVehicles(line: TransitLine): number {
+    return peakVehicles(line.timetable, line.cycleTime);
+  }
+
+  /** Effective headway right now: the timetable's, or longer if vehicles are missing. */
+  headway(line: TransitLine): number {
+    const target = targetHeadway(line.timetable, this.time);
+    const n = this.activeVehicles(line);
+    if (!isFinite(target) || n === 0) return Infinity;
+    return Math.max(target, line.cycleTime / n);
+  }
+
+  setTimetable(line: TransitLine, tt: Timetable): void {
+    line.timetable = tt;
+    this.routerDirty = true;
+    this.onChange();
   }
 
   vehiclesOf(line: TransitLine): Vehicle[] {
@@ -430,7 +556,7 @@ export class Game {
     const id = this.nextId++;
     this.vehicleCounter++;
     const v: Vehicle = {
-      id, name: `${def.name} ${this.vehicleCounter}`, mode: depot.mode, depotId, lineId: null,
+      id, name: `${def.name} ${this.vehicleCounter}`, mode: depot.mode, depotId, lineId: null, driverId: null,
       state: 'depot', deadheadTo: 'depot', path: null, s: 0, seg: 0, v: 0, runIdx: 0, stopIdx: 0,
       dwellUntil: 0, arrivedAt: 0, passengers: [], x: depot.pos.x, y: depot.pos.y, ang: 0, kmTotal: 0,
     };
@@ -451,6 +577,10 @@ export class Game {
     this.onChange();
   }
 
+  /**
+   * Put a vehicle into a line's pool (or take it out with null). Vehicles in the depot wait
+   * for the dispatcher; vehicles on the road switch over directly.
+   */
   assignVehicle(id: number, lineId: number | null): void {
     const v = this.vehicles.get(id);
     if (!v || v.lineId === lineId) return;
@@ -459,9 +589,20 @@ export class Game {
       v.passengers = [];
     }
     v.lineId = lineId;
-    this.dispatch(v, lineId === null ? 'depot' : 'line');
+    if (v.state !== 'depot') this.dispatch(v, lineId === null ? 'depot' : 'line');
+    this.dispatchTimer = DISPATCH_INTERVAL; // run the dispatcher on the next step
     this.routerDirty = true;
     this.onChange();
+  }
+
+  /** Assign (or buy) vehicles until the line's pool covers the timetable's peak. */
+  assignMissing(line: TransitLine): void {
+    let missing = this.peakVehicles(line) - this.vehiclesOf(line).length;
+    while (missing-- > 0) {
+      const before = this.vehiclesOf(line).length;
+      this.addVehicleToLine(line);
+      if (this.vehiclesOf(line).length === before) break;
+    }
   }
 
   /** Add a vehicle to a line: reuse an idle one or buy a new one at the closest depot. */
@@ -485,14 +626,51 @@ export class Game {
   }
 
   removeVehicleFromLine(line: TransitLine): void {
-    const vs = this.vehiclesOf(line).filter((v) => !(v.state === 'deadhead' && v.deadheadTo === 'depot'));
+    const vs = this.vehiclesOf(line);
     if (!vs.length) return;
-    // Prefer an empty vehicle
-    vs.sort((a, b) => a.passengers.length - b.passengers.length);
+    // Prefer a vehicle in the depot, then the emptiest one
+    const rank = (v: Vehicle) => (v.state === 'depot' ? -1 : v.state === 'deadhead' && v.deadheadTo === 'depot' ? 0 : 1);
+    vs.sort((a, b) => rank(a) - rank(b) || a.passengers.length - b.passengers.length);
     this.assignVehicle(vs[0].id, null);
   }
 
+  /**
+   * Start vehicles from the depot when the timetable needs more of them.
+   * Surplus vehicles return to the depot from the terminus (see stepVehicle).
+   */
+  private runDispatcher(): void {
+    for (const line of this.lines.values()) {
+      line.driverShortage = false;
+      let active = this.activeVehicles(line);
+      const req = this.requiredVehicles(line);
+      if (active >= req) continue;
+      const first = this.stops.get(line.runs[0].stopIds[0])!.pos;
+      const waiting = this.vehiclesOf(line)
+        .filter((v) => v.state === 'depot')
+        .sort((a, b) => {
+          const da = this.depots.get(a.depotId)!.pos, db = this.depots.get(b.depotId)!.pos;
+          return Math.hypot(da.x - first.x, da.y - first.y) - Math.hypot(db.x - first.x, db.y - first.y);
+        });
+      for (const v of waiting) {
+        if (active >= req) break;
+        if (!this.takeDriver(v)) {
+          line.driverShortage = true;
+          continue;
+        }
+        this.dispatch(v, 'line');
+        if (v.state !== 'depot') active++;
+      }
+    }
+    const sig = [...this.lines.values()].map((l) => Math.round(this.headway(l))).join(',');
+    if (sig !== this.headwaySig) {
+      this.headwaySig = sig;
+      this.routerDirty = true;
+    }
+  }
+
   private dispatch(v: Vehicle, to: 'line' | 'depot'): void {
+    if (v.state === 'depot' && to === 'depot') return;
+    if (v.state === 'depot' && !this.takeDriver(v)) return;
     const depot = this.depots.get(v.depotId)!;
     const graph = this.map.graph;
     const from = v.state === 'depot' ? depot.pos : graph.snap(v.x, v.y, 80) ?? depot.pos;
@@ -531,6 +709,9 @@ export class Game {
     v.v = 0;
     v.x = depot.pos.x;
     v.y = depot.pos.y;
+    this.today.lost += v.passengers.length;
+    v.passengers = [];
+    this.releaseDriver(v);
   }
 
   // ---------------------------------------------------------------- simulation
@@ -546,8 +727,23 @@ export class Game {
 
   private step(dt: number): void {
     const dayBefore = this.day;
+    const shiftDayBefore = Math.floor((this.time - 3 * 3600) / 86400);
     this.time += dt;
     if (this.day !== dayBefore) this.newDay();
+    // Shift day starts at 03:00: everyone gets a fresh 8 h
+    if (Math.floor((this.time - 3 * 3600) / 86400) !== shiftDayBefore) {
+      for (const d of this.drivers.values()) d.worked = 0;
+    }
+
+    const wage = (this.drivers.size * DRIVER_WAGE_DAY * dt) / 86400;
+    this.money -= wage;
+    this.today.costs += wage;
+
+    this.dispatchTimer += dt;
+    if (this.dispatchTimer >= DISPATCH_INTERVAL) {
+      this.dispatchTimer = 0;
+      this.runDispatcher();
+    }
 
     if (this.routerDirty) {
       this.router = new Router(this.map.cells, [...this.stops.values()], [...this.lines.values()], (l) =>
@@ -620,6 +816,10 @@ export class Game {
     const cost = (def.costPerHour * dt) / 3600;
     this.money -= cost;
     this.today.costs += cost;
+    if (v.driverId !== null) {
+      const d = this.drivers.get(v.driverId);
+      if (d) d.worked += dt;
+    }
 
     if (v.state === 'deadhead') {
       if (this.drive(v, v.path!.length, dt)) {
@@ -654,8 +854,31 @@ export class Game {
 
     switch (v.state) {
       case 'layover': {
-        const hw = this.headway(line);
-        if (this.time - v.arrivedAt >= MIN_LAYOVER && this.time - run.lastDeparture >= hw * 0.9) {
+        // Driver relief at the terminus when the next trip would exceed the shift
+        const drv = v.driverId !== null ? this.drivers.get(v.driverId) : undefined;
+        const tripTime = line.cycleTime / line.runs.length;
+        if (drv && drv.worked + tripTime > SHIFT_MAX) {
+          const fresh = this.availableDriver(v.depotId);
+          if (fresh) {
+            drv.vehicleId = null;
+            fresh.vehicleId = v.id;
+            v.driverId = fresh.id;
+          } else {
+            line.driverShortage = true;
+            this.dispatch(v, 'depot');
+            break;
+          }
+        }
+        // More vehicles out than the timetable needs: this one goes home
+        if (this.activeVehicles(line) > this.requiredVehicles(line)) {
+          this.dispatch(v, 'depot');
+          break;
+        }
+        const hw = targetHeadway(line.timetable, this.time);
+        if (
+          isFinite(hw) && this.time - v.arrivedAt >= MIN_LAYOVER &&
+          this.time - run.lastDeparture >= hw * 0.95
+        ) {
           run.lastDeparture = this.time;
           v.stopIdx = 0;
           this.serveStop(v, line, run);
@@ -806,7 +1029,7 @@ export class Game {
 
   serialize(): SaveData {
     return {
-      v: 1,
+      v: 2,
       area: this.map.area,
       time: this.time,
       money: this.money,
@@ -817,10 +1040,12 @@ export class Game {
       depots: [...this.depots.values()].map((d) => ({ id: d.id, name: d.name, mode: d.mode, x: d.pos.x, y: d.pos.y })),
       lines: [...this.lines.values()].map((l) => ({
         id: l.id, name: l.name, color: l.color, mode: l.mode, stopIds: l.stopIds, circular: l.circular,
+        timetable: l.timetable,
       })),
       vehicles: [...this.vehicles.values()].map((v) => ({
         id: v.id, name: v.name, mode: v.mode, depotId: v.depotId, lineId: v.lineId,
       })),
+      drivers: [...this.drivers.values()].map((d) => ({ id: d.id, name: d.name, depotId: d.depotId })),
       history: this.history,
     };
   }
@@ -848,22 +1073,36 @@ export class Game {
       if (typeof runs === 'string') continue;
       g.lines.set(l.id, {
         ...l, stopIds, runs, cycleTime: cycleTime(runs), passengersToday: 0, revenueToday: 0, version: 0,
+        timetable: l.timetable ?? defaultTimetable(), driverShortage: false,
       });
     }
     for (const vd of data.vehicles) {
       const depot = g.depots.get(vd.depotId);
       if (!depot) continue;
       const v: Vehicle = {
-        id: vd.id, name: vd.name, mode: vd.mode, depotId: vd.depotId, lineId: null,
+        id: vd.id, name: vd.name, mode: vd.mode, depotId: vd.depotId, driverId: null,
+        lineId: vd.lineId !== null && g.lines.has(vd.lineId) ? vd.lineId : null,
         state: 'depot', deadheadTo: 'depot', path: null, s: 0, seg: 0, v: 0, runIdx: 0, stopIdx: 0,
         dwellUntil: 0, arrivedAt: 0, passengers: [], x: depot.pos.x, y: depot.pos.y, ang: 0, kmTotal: 0,
       };
       g.vehicles.set(v.id, v);
-      if (vd.lineId !== null && g.lines.has(vd.lineId)) {
-        v.lineId = vd.lineId;
-        g.dispatch(v, 'line');
+    }
+    if (data.drivers) {
+      for (const d of data.drivers) {
+        if (g.depots.has(d.depotId)) g.drivers.set(d.id, { ...d, worked: 0, vehicleId: null });
+      }
+    } else {
+      // Saves from before staff existed: give every depot enough drivers for its buses
+      for (const depot of g.depots.values()) {
+        const n = [...g.vehicles.values()].filter((v) => v.depotId === depot.id).length;
+        for (let i = 0; i < Math.ceil(n * 1.6); i++) {
+          const id = g.nextId++;
+          g.drivers.set(id, { id, name: randomName(), depotId: depot.id, worked: 0, vehicleId: null });
+        }
       }
     }
+    // Vehicles start in the depot; the dispatcher sends them out per timetable.
+    g.dispatchTimer = DISPATCH_INTERVAL;
     return g;
   }
 }

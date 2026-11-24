@@ -179,3 +179,21 @@ canvas#map.grabbing { cursor: grabbing; }
 #topbar { overflow: hidden; }
 #topbar .stat small, #topbar .stat b { white-space: nowrap; }
 @media (max-width: 1000px) { #topbar .stat small { display: none; } }
+
+/* Line tabs, timetable, warnings */
+.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; background: var(--panel-2); border-radius: 8px; padding: 3px; margin: 10px 0 12px; }
+.tabs button { border: 0; background: transparent; padding: 6px 4px; border-radius: 6px; cursor: pointer; }
+.tabs button.on { background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.12); font-weight: 700; }
+.warn { background: #fff4e5; color: #8a4b00; border-radius: 7px; padding: 6px 9px; font-size: 13px; margin: 6px 0; }
+#panel .warn-row { font-size: 13px; color: #8a4b00; }
+#panel .row.small { padding: 3px 8px; font-size: 13px; cursor: default; }
+.tt-hours { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#panel .tt-hours select { width: auto; }
+table.tt { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+table.tt th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; padding: 4px; }
+table.tt td { padding: 4px; border-top: 1px solid var(--line); vertical-align: middle; }
+table.tt td small { display: block; color: var(--muted); font-size: 11px; }
+table.tt td.num { text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+table.tt tr.cur td { background: var(--accent-2); }
+#panel table.tt select { padding: 3px 4px; }
+#panel .row.small .meta { white-space: nowrap; }
