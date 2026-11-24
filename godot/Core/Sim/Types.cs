@@ -20,6 +20,9 @@ public sealed class Depot
     public RoadPos Pos;
     /// <summary>Yard layout; its parking spots and offices limit vehicles and drivers.</summary>
     public DepotLayout Layout = new();
+
+    // Runtime status of the yard services (updated by the simulation, not saved)
+    public int Repairing, Washing, Charging, Workshops, WashBays, Chargers;
 }
 
 /// <summary>One direction of a line: a path through an ordered list of stops.</summary>
@@ -47,6 +50,12 @@ public sealed class TransitLine
     public Timetable Timetable = Timetable.Default();
     /// <summary>Set by the dispatcher when a vehicle could not leave for lack of a driver.</summary>
     public bool DriverShortage;
+    /// <summary>Set when vehicles are in the pool but none is ready (repair, charging).</summary>
+    public bool MaintenanceShortage;
+    /// <summary>Model bought when vehicles are added to this line.</summary>
+    public string? PreferredModel;
+    /// <summary>Average cleanliness of the vehicles in service (0..1); dirty vehicles deter passengers.</summary>
+    public double Comfort = 1;
     public int PassengersToday;
     public double RevenueToday;
 }
@@ -61,7 +70,7 @@ public sealed class Driver
     public int? VehicleId;
 }
 
-public enum VehicleState { Depot, Deadhead, Layover, Moving, Dwell }
+public enum VehicleState { Depot, Deadhead, Layover, Moving, Dwell, Broken }
 
 public enum DeadheadTarget { Line, Depot, Rejoin }
 
@@ -70,6 +79,18 @@ public sealed class Vehicle
     public int Id;
     public string Name = "";
     public ModeId Mode;
+    /// <summary>Vehicle model id (see Modes.Model).</summary>
+    public string ModelId = "";
+    public VehicleDef Def => Modes.Model(Mode, ModelId);
+    /// <summary>Technical condition 0..1; wears with distance, restored in a workshop.</summary>
+    public double Condition = 1;
+    /// <summary>Cleanliness 0..1; drops while in service, restored in a wash bay.</summary>
+    public double Cleanliness = 1;
+    /// <summary>Battery charge 0..1 (electric vehicles only).</summary>
+    public double Charge = 1;
+    public int Breakdowns;
+    public double BoughtAt;
+    public double BrokenUntil;
     public int DepotId;
     /// <summary>Line the vehicle is assigned to (its pool). It only runs when the timetable needs it.</summary>
     public int? LineId;

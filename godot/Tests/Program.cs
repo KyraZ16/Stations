@@ -141,5 +141,57 @@ Check(yardGame.RemoveModuleAt(yardDepot, crossRoad.X, crossRoad.Y) != null, "Fah
 var yardRestored = Game.Restore(map, SaveData.FromJson(yardGame.Serialize().ToJson()));
 Check(yardRestored.Depots[yardDepot.Id].Layout.Modules.Count == yardDepot.Layout.Modules.Count, "Layout wird gespeichert und geladen");
 
+Console.WriteLine("== Verschleiß und Wartung (je 14 Tage)");
+(double AvgCond, int Breakdowns, double Repairs) RunFortnight(bool workshops)
+{
+    var gm = new Game(map, sandbox: true, seed: 11);
+    DemoNetwork.Build(gm);
+    if (workshops)
+    {
+        foreach (var d in gm.Depots.Values)
+        {
+            int y = d.Mode == ModeId.Tram ? 14 : 8;
+            string? err = gm.PlaceModule(d, ModuleType.Workshop, 2, y, 0);
+            if (err != null) Console.WriteLine($"  Werkstatt nicht gebaut: {err}");
+        }
+    }
+    double costsBefore = 0;
+    for (int day = 0; day < 14; day++) gm.Advance(86400);
+    costsBefore = gm.History.Sum(h => h.Costs);
+    return (gm.Vehicles.Values.Average(v => v.Condition), gm.Vehicles.Values.Sum(v => v.Breakdowns), costsBefore);
+}
+var noWs = RunFortnight(false);
+var withWs = RunFortnight(true);
+Console.WriteLine($"  ohne Werkstatt: Ø Zustand {noWs.AvgCond:P0}, {noWs.Breakdowns} Pannen");
+Console.WriteLine($"  mit Werkstatt:  Ø Zustand {withWs.AvgCond:P0}, {withWs.Breakdowns} Pannen");
+Check(noWs.AvgCond < 0.6, "ohne Werkstatt verschleißen die Fahrzeuge");
+Check(withWs.AvgCond > noWs.AvgCond + 0.2, "Werkstatt hält die Flotte in Schuss");
+Check(withWs.Breakdowns < noWs.Breakdowns, "mit Werkstatt weniger Pannen");
+
+var eg = new Game(map, sandbox: true, seed: 5);
+var eDepot = eg.AddDepot(map.Graph.Snap(-200, -900, 300)!.Value)!;
+var eLine = eg.CreateLine(new List<int>
+{
+    eg.AddStop(map.Graph.Snap(-1600, -600, 200)!.Value)!.Id,
+    eg.AddStop(map.Graph.Snap(400, -600, 200)!.Value)!.Id,
+}, false)!;
+eLine.PreferredModel = "ebus";
+eg.AssignMissing(eLine);
+eg.HireMissingDrivers();
+Check(eg.VehiclesOf(eLine).All(v => v.Def.Electric), "Linie kauft ihr Wunschmodell (E-Bus)");
+eg.Advance(86400);
+Check(eg.Vehicles.Values.Any(v => v.Charge < 0.6) && eLine.MaintenanceShortage, "E-Busse ohne Ladestation fallen nach und nach aus");
+Console.WriteLine("  " + (eg.PlaceModule(eDepot, ModuleType.Charger, 17, 8, 0) ?? "Ladestation 1 gebaut"));
+Console.WriteLine("  " + (eg.PlaceModule(eDepot, ModuleType.Charger, 18, 8, 0) ?? "Ladestation 2 gebaut"));
+eg.Advance(6 * 3600);
+var inYard = eg.Vehicles.Values.Where(v => v.State == VehicleState.Depot).ToList();
+Check(inYard.Count > 0 && inYard.All(v => v.Charge > 0.9), "Ladestationen laden die E-Busse im Hof");
+Check(eg.BuyVehicle(eDepot.Id, "gelenkbus") == null, "Gelenkbus braucht einen langen Stellplatz");
+eg.PlaceModule(eDepot, ModuleType.LongBusSpot, 3, 0, 0);
+Check(eg.BuyVehicle(eDepot.Id, "gelenkbus") != null, "mit Gelenkbus-Stellplatz klappt der Kauf");
+var eRestored = Game.Restore(map, SaveData.FromJson(eg.Serialize().ToJson()));
+Check(eRestored.Vehicles.Values.Select(v => (v.ModelId, Math.Round(v.Charge, 3))).SequenceEqual(eg.Vehicles.Values.Select(v => (v.ModelId, Math.Round(v.Charge, 3)))),
+    "Modell und Akkustand werden gespeichert");
+
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

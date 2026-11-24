@@ -253,7 +253,7 @@ public sealed partial class Game
 
     /// <summary>Vehicles of the line that are out of the depot and not heading back.</summary>
     public int ActiveVehicles(TransitLine line) =>
-        Vehicles.Values.Count(v => v.LineId == line.Id && v.State != VehicleState.Depot && !HeadingHome(v));
+        Vehicles.Values.Count(v => v.LineId == line.Id && v.State is not (VehicleState.Depot or VehicleState.Broken) && !HeadingHome(v));
 
     /// <summary>Vehicles the timetable needs now (looking ahead so they leave the depot in time).</summary>
     public int RequiredVehicles(TransitLine line) => Math.Max(
@@ -284,22 +284,24 @@ public sealed partial class Game
 
     // ---------------------------------------------------------------- vehicles
 
-    public Vehicle? BuyVehicle(int depotId)
+    public Vehicle? BuyVehicle(int depotId, string? modelId = null)
     {
         if (!Depots.TryGetValue(depotId, out var depot)) return null;
-        if (FreeSpots(depot) <= 0)
+        var def = Modes.Model(depot.Mode, modelId);
+        if (!CanHouse(depot, def))
         {
-            Notify($"{depot.Name} ist voll – baue weitere Stellplätze (Betriebshof bearbeiten)", true);
+            Notify(def.Length > 15 && depot.Mode == ModeId.Bus
+                ? $"{depot.Name}: kein freier Gelenkbus-Stellplatz – baue einen (Betriebshof bearbeiten)"
+                : $"{depot.Name} ist voll – baue weitere Stellplätze (Betriebshof bearbeiten)", true);
             return null;
         }
-        var def = Modes.Get(depot.Mode).Vehicle;
         if (!Pay(def.Price)) return null;
         int id = _nextId++;
         _vehicleCounter++;
         var v = new Vehicle
         {
-            Id = id, Name = $"{def.Name} {_vehicleCounter}", Mode = depot.Mode, DepotId = depotId,
-            X = depot.Pos.X, Y = depot.Pos.Y,
+            Id = id, Name = $"{def.Name} {_vehicleCounter}", Mode = depot.Mode, ModelId = def.Id, DepotId = depotId,
+            X = depot.Pos.X, Y = depot.Pos.Y, BoughtAt = Time,
         };
         Vehicles[id] = v;
         OnChange();
@@ -309,13 +311,20 @@ public sealed partial class Game
     /// <summary>Connected parking spots not taken by vehicles based at the depot.</summary>
     public int FreeSpots(Depot d) => d.Layout.VehicleCapacity(d.Mode) - Vehicles.Values.Count(v => v.DepotId == d.Id);
 
+    /// <summary>Lengths of the vehicles based at a depot (for spot assignment).</summary>
+    public List<double> FleetLengths(Depot d) => Vehicles.Values.Where(v => v.DepotId == d.Id).OrderBy(v => v.Id).Select(v => v.Def.Length).ToList();
+
+    /// <summary>Is there a fitting free spot for one more vehicle of this model?</summary>
+    public bool CanHouse(Depot d, VehicleDef def) => d.Layout.Fits(FleetLengths(d).Append(def.Length).ToList(), d.Mode);
+
     // ---------------------------------------------------------------- depot yard
 
     /// <summary>Place a module in a depot yard. Returns an error message or null.</summary>
     public string? PlaceModule(Depot d, ModuleType type, int x, int y, int rot)
     {
         if (type == ModuleType.TramSpot && d.Mode != ModeId.Tram) return "Abstellgleise gibt es nur im Tram-Betriebshof";
-        if (type == ModuleType.BusSpot && d.Mode == ModeId.Tram) return "Im Tram-Betriebshof werden Abstellgleise gebaut";
+        if (type is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.Charger && d.Mode == ModeId.Tram)
+            return "Im Tram-Betriebshof werden Abstellgleise gebaut";
         if (d.Layout.CanPlace(type, x, y, rot) is string err) return err;
         if (!Pay(DepotLayout.Def(type).Cost)) return "Nicht genug Geld";
         d.Layout.Modules.Add(new PlacedModule { Type = type, X = x, Y = y, Rot = rot });
@@ -328,12 +337,11 @@ public sealed partial class Game
     {
         var m = d.Layout.ModuleAt(x, y);
         if (m == null) return null;
-        int capBefore = d.Layout.VehicleCapacity(d.Mode);
+        var fleet = FleetLengths(d);
+        bool fitsBefore = d.Layout.Fits(fleet, d.Mode);
         d.Layout.Modules.Remove(m);
-        int vehicles = Vehicles.Values.Count(v => v.DepotId == d.Id);
-        int capAfter = d.Layout.VehicleCapacity(d.Mode);
         // Only refuse if this removal takes away a spot that is needed (older saves may already be over capacity).
-        if (capAfter < capBefore && capAfter < vehicles)
+        if (fitsBefore && !d.Layout.Fits(fleet, d.Mode))
         {
             d.Layout.Modules.Add(m);
             return "Dann hätten nicht mehr alle Fahrzeuge einen Stellplatz";
@@ -347,6 +355,9 @@ public sealed partial class Game
         return null;
     }
 
+    /// <summary>What a vehicle sells for: half the price, less for worn vehicles.</summary>
+    public static double ResaleValue(Vehicle v) => v.Def.Price * 0.5 * (0.4 + 0.6 * v.Condition);
+
     public void SellVehicle(int id)
     {
         if (!Vehicles.TryGetValue(id, out var v)) return;
@@ -355,7 +366,7 @@ public sealed partial class Game
             Notify("Fahrzeuge können nur im Betriebshof verkauft werden", true);
             return;
         }
-        Money += Modes.Get(v.Mode).Vehicle.Price * 0.5;
+        Money += ResaleValue(v);
         Vehicles.Remove(id);
         OnChange();
     }
@@ -396,7 +407,8 @@ public sealed partial class Game
     {
         var first = Stops[line.StopIds[0]].Pos;
         double Dist(Depot d) => Util.Hypot(d.Pos.X - first.X, d.Pos.Y - first.Y);
-        var idle = Vehicles.Values.Where(v => v.LineId == null && v.Mode == line.Mode)
+        var def = Modes.Model(line.Mode, line.PreferredModel);
+        var idle = Vehicles.Values.Where(v => v.LineId == null && v.Mode == line.Mode && (line.PreferredModel == null || v.ModelId == def.Id))
             .OrderBy(v => Dist(Depots[v.DepotId])).FirstOrDefault();
         if (idle != null)
         {
@@ -404,13 +416,13 @@ public sealed partial class Game
             return;
         }
         var candidates = Depots.Values.Where(d => d.Mode == line.Mode).OrderBy(Dist).ToList();
-        var depot = candidates.FirstOrDefault(d => FreeSpots(d) > 0) ?? candidates.FirstOrDefault();
+        var depot = candidates.FirstOrDefault(d => CanHouse(d, def)) ?? candidates.FirstOrDefault();
         if (depot == null)
         {
             Notify(line.Mode == ModeId.Tram ? "Baue zuerst einen Tram-Betriebshof an den Gleisen" : "Baue zuerst einen Betriebshof", true);
             return;
         }
-        var nv = BuyVehicle(depot.Id);
+        var nv = BuyVehicle(depot.Id, def.Id);
         if (nv != null) AssignVehicle(nv.Id, line.Id);
     }
 
@@ -431,12 +443,17 @@ public sealed partial class Game
         foreach (var line in Lines.Values)
         {
             line.DriverShortage = false;
+            line.MaintenanceShortage = false;
             int active = ActiveVehicles(line);
             int req = RequiredVehicles(line);
             if (active >= req) continue;
             var first = Stops[line.Runs[0].StopIds[0]].Pos;
-            var waiting = VehiclesOf(line).Where(v => v.State == VehicleState.Depot)
-                .OrderBy(v => Util.Hypot(Depots[v.DepotId].Pos.X - first.X, Depots[v.DepotId].Pos.Y - first.Y));
+            var inDepot = VehiclesOf(line).Where(v => v.State == VehicleState.Depot).ToList();
+            // Only vehicles in good shape go out; the best ones first, then the closest depot
+            var waiting = inDepot.Where(ReadyForService)
+                .OrderByDescending(v => Math.Round(v.Condition, 1))
+                .ThenBy(v => Util.Hypot(Depots[v.DepotId].Pos.X - first.X, Depots[v.DepotId].Pos.Y - first.Y)).ToList();
+            if (waiting.Count < Math.Min(req - active, inDepot.Count)) line.MaintenanceShortage = true;
             foreach (var v in waiting)
             {
                 if (active >= req) break;
@@ -456,6 +473,12 @@ public sealed partial class Game
             _routerDirty = true;
         }
     }
+
+    /// <summary>Good enough to leave the depot (with some margin so vehicles don't bounce).</summary>
+    public static bool ReadyForService(Vehicle v) => v.Condition >= 0.35 && (!v.Def.Electric || v.Charge >= 0.6);
+
+    /// <summary>Should return to the depot for repair or charging at the next terminus.</summary>
+    public static bool NeedsService(Vehicle v) => v.Condition < 0.25 || (v.Def.Electric && v.Charge < 0.15);
 
     private void Dispatch(Vehicle v, DeadheadTarget to)
     {

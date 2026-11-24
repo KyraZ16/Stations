@@ -199,7 +199,7 @@ public partial class DepotEditor : Node3D
                     AddBox(node, c, s, Mat(ok ? "4a4f56" : "7a5a58"), shadow: false);
                     break;
                 }
-                case ModuleType.BusSpot or ModuleType.TramSpot:
+                case ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot:
                 {
                     var (c, s) = Footprint(m.X, m.Y, m.W, m.H, 0.05f);
                     AddBox(node, c, s, Mat(ok ? def.Color : "d8a49c"), shadow: false);
@@ -228,6 +228,15 @@ public partial class DepotEditor : Node3D
                         AddBox(node, c + dOff, door, Mat("3e4752"));
                         AddBox(node, c - dOff, door, Mat("3e4752"));
                     }
+                    if (m.Type == ModuleType.Charger)
+                    {
+                        // charging post with a green light
+                        AddBox(node, c + new Vector3(0, s.Y / 2 + 0.2f, 0), new Vector3(0.5f, 0.4f, 0.5f), new StandardMaterial3D
+                        {
+                            AlbedoColor = new Color("5dff9a"), EmissionEnabled = true, Emission = new Color("35d06e"), EmissionEnergyMultiplier = 2,
+                        });
+                        break;
+                    }
                     node.AddChild(new Label3D
                     {
                         Text = def.Name, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 64, PixelSize = 0.02f,
@@ -243,7 +252,7 @@ public partial class DepotEditor : Node3D
                 node.AddChild(new Label3D
                 {
                     Text = "⚠ kein Anschluss", Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 48, PixelSize = 0.02f,
-                    Position = c + new Vector3(0, s.Y / 2 + (m.Type is ModuleType.BusSpot or ModuleType.TramSpot ? 1.5f : 4), 0),
+                    Position = c + new Vector3(0, s.Y / 2 + (DepotLayout.IsSpot(m.Type) ? 1.5f : 4), 0),
                     Modulate = new Color("ffb4a8"), OutlineSize = 10, OutlineModulate = new Color(0, 0, 0, 0.7f), NoDepthTest = true,
                 });
             }
@@ -255,13 +264,14 @@ public partial class DepotEditor : Node3D
     private void RebuildVehicles()
     {
         foreach (var c in _vehiclesRoot.GetChildren()) c.QueueFree();
-        var parked = Game.Vehicles.Values.Where(v => v.DepotId == Depot.Id && v.State == VehicleState.Depot).OrderBy(v => v.Id).ToList();
-        var spots = L.ConnectedSpots(Depot.Mode);
-        var def = Modes.Get(Depot.Mode).Vehicle;
-        for (int i = 0; i < Math.Min(parked.Count, spots.Count); i++)
+        // Every vehicle of the depot has its own spot (by length); only those at home are shown.
+        var fleet = Game.Vehicles.Values.Where(v => v.DepotId == Depot.Id).OrderBy(v => v.Id).ToList();
+        var spots = L.Assign(fleet.Select(v => v.Def.Length).ToList(), Depot.Mode);
+        for (int i = 0; i < fleet.Count; i++)
         {
-            var v = parked[i];
-            var s = spots[i];
+            var v = fleet[i];
+            if (v.State != VehicleState.Depot || spots[i] is not PlacedModule s) continue;
+            var def = v.Def;
             var color = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? l.Color : "8d939b";
             var (c, _) = Footprint(s.X, s.Y, s.W, s.H, 0);
             bool vertical = s.Rot % 2 == 0;
@@ -463,8 +473,10 @@ public partial class DepotEditor : Node3D
     {
         foreach (var c in _palette.GetChildren()) c.QueueFree();
         _palette.AddChild(Ui.Section("Bauen"));
-        var types = new List<ModuleType> { ModuleType.Road, Depot.Mode == ModeId.Tram ? ModuleType.TramSpot : ModuleType.BusSpot,
-            ModuleType.Office, ModuleType.Workshop, ModuleType.Wash };
+        var types = Depot.Mode == ModeId.Tram
+            ? new List<ModuleType> { ModuleType.Road, ModuleType.TramSpot, ModuleType.Office, ModuleType.Workshop, ModuleType.Wash }
+            : new List<ModuleType> { ModuleType.Road, ModuleType.BusSpot, ModuleType.LongBusSpot, ModuleType.Charger,
+                ModuleType.Office, ModuleType.Workshop, ModuleType.Wash };
         foreach (var t in types)
         {
             var def = DepotLayout.Def(t);
@@ -516,7 +528,8 @@ public partial class DepotEditor : Node3D
         int home = Game.Vehicles.Values.Count(v => v.DepotId == Depot.Id && v.State == VehicleState.Depot);
         int drivers = Game.DriversOf(Depot.Id).Count;
         string spot = Depot.Mode == ModeId.Tram ? "Abstellgleise" : "Stellplätze";
+        string service = $"Werkstatt: {Depot.Repairing}   ·   Wäsche: {Depot.Washing}" + (Depot.Chargers > 0 ? $"   ·   Laden: {Depot.Charging}" : "");
         _stats.Text = $"{spot}: {vehicles} / {L.VehicleCapacity(Depot.Mode)} belegt ({home} im Hof)   ·   " +
-                      $"Fahrer: {drivers} / {L.DriverCapacity()}   ·   Kontostand {Util.Money(Game.Money)}";
+                      $"Fahrer: {drivers} / {L.DriverCapacity()}   ·   {service}   ·   {Util.Money(Game.Money)}";
     }
 }

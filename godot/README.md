@@ -28,6 +28,7 @@ Nach `--` auf der Kommandozeile, z. B.
 - `--tooltest=line|timetable|depot|vehicle|stop|track|draft` baut über die Werkzeuge ein kleines Netz und öffnet das genannte Panel
 - `--time=2` spult auf die angegebene Uhrzeit vor (z. B. nachts, wenn alle Fahrzeuge im Hof stehen)
 - `--depot` öffnet den ersten Betriebshof im 3D-Editor (`--depot=tram` den Tram-Betriebshof, `--depot=edit` mit Beispiel-Bauteilen)
+- `--days=12` spult Tage vor (z. B. um Verschleiß zu sehen), `--select=depot|vehicle|line` öffnet ein Panel
 - `--debugui` listet Panel-Elemente mit auffällig großer Mindestbreite
 
 ## Stand
@@ -36,4 +37,5 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] Kartenansicht (2D): Startbildschirm mit Städten und Ortssuche, Karte mit Zoom/Verschieben, Linien, Gleise, Fahrzeuge, Haltestellen, Kopfleiste, Speichern (F5)
 - [x] Werkzeuge und Panels: Bus/Tram, Haltestelle, Linie zeichnen und bearbeiten, Betriebshof, Gleise, Abreißen, Einzugsgebiet; Panels für Übersicht mit Hinweisen, Linie (Übersicht/Fahrplan/Strecke), Haltestelle, Fahrzeug, Betriebshof mit Personal
 - [x] Depot-Builder (3D), erste Version: Grundstück mit Raster und Einfahrt, Fahrwege, Stellplätze/Abstellgleise, Sozialgebäude, Werkstatt, Waschanlage; Stellplätze und Gebäude zählen nur mit Anschluss an die Einfahrt; Stellplätze begrenzen Fahrzeuge, Sozialgebäude die Fahrer; geparkte Fahrzeuge sichtbar
-- [ ] Werkstatt und Waschanlage mit Wirkung (Wartung, Verschleiß, Sauberkeit), Fahrzeuge fahren im Hof, echte 3D-Modelle
+- [x] Wartung und Verschleiß: Zustand sinkt mit den Kilometern (Pannen unter 50 %), Sauberkeit mit der Einsatzzeit (weniger Fahrgäste), Werkstatt repariert, Waschanlage wäscht, Ladestationen laden E-Busse; Disposition schickt nur einsatzbereite Fahrzeuge; Fahrzeugmodelle Solobus, Gelenkbus (langer Stellplatz), E-Bus
+- [ ] Fahrzeuge fahren sichtbar im Hof, echte 3D-Modelle

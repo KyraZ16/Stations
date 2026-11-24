@@ -71,6 +71,13 @@ public sealed partial class Game
             NetworkVersion++;
         }
 
+        _serviceTimer += dt;
+        if (_serviceTimer >= ServiceInterval)
+        {
+            ServiceDepots(_serviceTimer);
+            _serviceTimer = 0;
+        }
+
         GenerateDemand(dt);
         foreach (var v in Vehicles.Values) StepVehicle(v, dt);
 
@@ -123,6 +130,9 @@ public sealed partial class Game
             double carT = dist * 1.4 / 9 + 240;
             double alt = Math.Min(walkT, carT);
             double p = 0.75 / (1 + Math.Exp((j.Time - alt) / 400));
+            // Dirty vehicles deter passengers: the least comfortable line of the journey counts
+            double comfort = j.Legs.Min(l => Lines.TryGetValue(l.Line, out var ln) ? ln.Comfort : 1);
+            p *= 0.6 + 0.4 * comfort;
             if (Rng.NextDouble() > p) continue;
             if (!Stops.TryGetValue(j.FirstStop, out var stop)) continue;
             // Legs are cached per cell pair; each passenger gets its own copy because they may be remapped.
@@ -141,11 +151,19 @@ public sealed partial class Game
     private void StepVehicle(Vehicle v, double dt)
     {
         if (v.State == VehicleState.Depot) return;
-        var def = Modes.Get(v.Mode).Vehicle;
+        var def = v.Def;
         double cost = def.CostPerHour * dt / 3600;
         Money -= cost;
         Today.Costs += cost;
         if (v.DriverId is int did && Drivers.TryGetValue(did, out var drvWork)) drvWork.Worked += dt;
+        v.Cleanliness = Math.Max(0, v.Cleanliness - dt / CleanHours / 3600);
+
+        if (v.State == VehicleState.Broken)
+        {
+            // Waiting for the breakdown service, then limping back to the depot
+            if (Time >= v.BrokenUntil) Dispatch(v, DeadheadTarget.Depot);
+            return;
+        }
 
         TransitLine? line = v.LineId is int lid && Lines.TryGetValue(lid, out var l0) ? l0 : null;
 
@@ -211,6 +229,12 @@ public sealed partial class Game
                         break;
                     }
                 }
+                // Worn out or battery low: go to the depot for service; the dispatcher sends a replacement
+                if (NeedsService(v))
+                {
+                    Dispatch(v, DeadheadTarget.Depot);
+                    break;
+                }
                 // More vehicles out than the timetable needs: this one goes home
                 if (ActiveVehicles(line) > RequiredVehicles(line))
                 {
@@ -265,7 +289,7 @@ public sealed partial class Game
     private bool Drive(Vehicle v, double target, double dt)
     {
         var path = v.Path!;
-        var def = Modes.Get(v.Mode).Vehicle;
+        var def = v.Def;
         double remaining = target - v.S;
         if (remaining <= 0.01)
         {
@@ -285,6 +309,8 @@ public sealed partial class Game
         }
         v.S += ds;
         v.KmTotal += ds / 1000;
+        v.Condition = Math.Max(0, v.Condition - ds / 1000 / def.LifeKm);
+        if (def.Electric) v.Charge = Math.Max(0, v.Charge - ds / 1000 / def.RangeKm);
         double c = def.CostPerKm * ds / 1000;
         Money -= c;
         Today.Costs += c;
@@ -294,6 +320,7 @@ public sealed partial class Game
         v.Y = p.Y;
         if (ds > 0.001) v.Ang = p.Ang;
         if (arrived) v.V = 0;
+        if (MaybeBreakDown(v, ds)) return false;
         return arrived;
     }
 
@@ -333,7 +360,7 @@ public sealed partial class Game
             v.Passengers = keep;
 
             // Boarding
-            int cap = Modes.Get(v.Mode).Vehicle.Capacity;
+            int cap = v.Def.Capacity;
             if (k < run.StopIds.Count - 1)
             {
                 var remaining = new List<Passenger>();
@@ -366,6 +393,76 @@ public sealed partial class Game
         v.State = VehicleState.Dwell;
         v.V = 0;
         v.DwellUntil = Time + (k == 0 ? 12 : 7) + moves * 1.2;
+    }
+
+    // ---------------------------------------------------------------- wear and maintenance
+
+    private const double ServiceInterval = 10; // s of game time between yard service updates
+    private const double CleanHours = 16; // hours in service from clean to dirty
+    private const double RepairPerHour = 0.25; // condition restored per hour in a workshop bay
+    private const double WashMinutes = 15;
+    private const double ChargeHours = 3;
+    private const int BaysPerWorkshop = 2;
+    public const double TowCost = 1_500;
+    private const double BreakdownMinutes = 20;
+    private double _serviceTimer;
+
+    /// <summary>
+    /// Breakdowns get likely below 50 % condition: at 20 % roughly one per 200 km.
+    /// A broken vehicle stops, its passengers are lost, and it is towed after a while.
+    /// </summary>
+    private bool MaybeBreakDown(Vehicle v, double ds)
+    {
+        if (v.Condition >= 0.5 || ds <= 0) return false;
+        double perKm = (0.5 - v.Condition) / 60;
+        if (Rng.NextDouble() > perKm * ds / 1000) return false;
+        v.State = VehicleState.Broken;
+        v.V = 0;
+        v.BrokenUntil = Time + BreakdownMinutes * 60;
+        v.Breakdowns++;
+        Today.Lost += v.Passengers.Count;
+        v.Passengers.Clear();
+        Money -= TowCost;
+        Today.Costs += TowCost;
+        string where = v.LineId is int lid && Lines.TryGetValue(lid, out var l) ? $" auf Linie {l.Name}" : "";
+        Notify($"Panne: {v.Name}{where} ist liegen geblieben", true);
+        return true;
+    }
+
+    /// <summary>Workshops repair, wash bays clean and chargers charge the vehicles standing in the depot.</summary>
+    private void ServiceDepots(double dt)
+    {
+        foreach (var d in Depots.Values)
+        {
+            d.Workshops = d.Layout.CountConnected(ModuleType.Workshop);
+            d.WashBays = d.Layout.CountConnected(ModuleType.Wash);
+            d.Chargers = d.Layout.CountConnected(ModuleType.Charger);
+            var home = Vehicles.Values.Where(v => v.DepotId == d.Id && v.State == VehicleState.Depot).ToList();
+
+            var repair = home.Where(v => v.Condition < 0.999).OrderBy(v => v.Condition).Take(d.Workshops * BaysPerWorkshop).ToList();
+            foreach (var v in repair)
+            {
+                double gain = Math.Min(1 - v.Condition, RepairPerHour * dt / 3600);
+                v.Condition += gain;
+                double c = gain * 100 * v.Def.RepairCostPerPercent;
+                Money -= c;
+                Today.Costs += c;
+            }
+            d.Repairing = repair.Count;
+
+            var wash = home.Where(v => v.Cleanliness < 0.999).OrderBy(v => v.Cleanliness).Take(d.WashBays).ToList();
+            foreach (var v in wash) v.Cleanliness = Math.Min(1, v.Cleanliness + dt / (WashMinutes * 60));
+            d.Washing = wash.Count;
+
+            var charge = home.Where(v => v.Def.Electric && v.Charge < 0.999).OrderBy(v => v.Charge).Take(d.Chargers).ToList();
+            foreach (var v in charge) v.Charge = Math.Min(1, v.Charge + dt / (ChargeHours * 3600));
+            d.Charging = charge.Count;
+        }
+        foreach (var l in Lines.Values)
+        {
+            var out_ = Vehicles.Values.Where(v => v.LineId == l.Id && v.State != VehicleState.Depot).ToList();
+            l.Comfort = out_.Count > 0 ? out_.Average(v => v.Cleanliness) : 1;
+        }
     }
 
     // ---------------------------------------------------------------- stats

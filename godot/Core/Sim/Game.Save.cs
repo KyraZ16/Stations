@@ -43,6 +43,7 @@ public sealed class SaveData
         public List<int> StopIds { get; set; } = new();
         public bool Circular { get; set; }
         public Timetable? Timetable { get; set; }
+        public string? PreferredModel { get; set; }
     }
 
     public sealed class VehicleDto
@@ -52,6 +53,13 @@ public sealed class SaveData
         public ModeId Mode { get; set; }
         public int DepotId { get; set; }
         public int? LineId { get; set; }
+        public string? Model { get; set; }
+        public double Condition { get; set; } = 1;
+        public double Cleanliness { get; set; } = 1;
+        public double Charge { get; set; } = 1;
+        public int Breakdowns { get; set; }
+        public double BoughtAt { get; set; }
+        public double Km { get; set; }
     }
 
     public sealed class DriverDto
@@ -93,9 +101,14 @@ public sealed partial class Game
             Lines = Lines.Values.Select(l => new SaveData.LineDto
             {
                 Id = l.Id, Name = l.Name, Color = l.Color, Mode = l.Mode, StopIds = l.StopIds.ToList(), Circular = l.Circular,
-                Timetable = l.Timetable.Clone(),
+                Timetable = l.Timetable.Clone(), PreferredModel = l.PreferredModel,
             }).ToList(),
-            Vehicles = Vehicles.Values.Select(v => new SaveData.VehicleDto { Id = v.Id, Name = v.Name, Mode = v.Mode, DepotId = v.DepotId, LineId = v.LineId }).ToList(),
+            Vehicles = Vehicles.Values.Select(v => new SaveData.VehicleDto
+            {
+                Id = v.Id, Name = v.Name, Mode = v.Mode, DepotId = v.DepotId, LineId = v.LineId, Model = v.ModelId,
+                Condition = v.Condition, Cleanliness = v.Cleanliness, Charge = v.Charge, Breakdowns = v.Breakdowns,
+                BoughtAt = v.BoughtAt, Km = v.KmTotal,
+            }).ToList(),
             Drivers = Drivers.Values.Select(d => new SaveData.DriverDto { Id = d.Id, Name = d.Name, DepotId = d.DepotId }).ToList(),
             Tracks = Tracks.Select(s => new[]
             {
@@ -147,7 +160,7 @@ public sealed partial class Game
             g.Lines[l.Id] = new TransitLine
             {
                 Id = l.Id, Name = l.Name, Color = l.Color, Mode = l.Mode, StopIds = stopIds, Circular = l.Circular,
-                Runs = runs, CycleTime = CycleTime(runs), Timetable = l.Timetable ?? Timetable.Default(),
+                Runs = runs, CycleTime = CycleTime(runs), Timetable = l.Timetable ?? Timetable.Default(), PreferredModel = l.PreferredModel,
             };
         }
         foreach (var vd in data.Vehicles)
@@ -156,6 +169,8 @@ public sealed partial class Game
             g.Vehicles[vd.Id] = new Vehicle
             {
                 Id = vd.Id, Name = vd.Name, Mode = vd.Mode, DepotId = vd.DepotId,
+                ModelId = Modes.Model(vd.Mode, vd.Model).Id, Condition = vd.Condition, Cleanliness = vd.Cleanliness,
+                Charge = vd.Charge, Breakdowns = vd.Breakdowns, BoughtAt = vd.BoughtAt, KmTotal = vd.Km,
                 LineId = vd.LineId is int lid && g.Lines.ContainsKey(lid) ? lid : null,
                 X = depot.Pos.X, Y = depot.Pos.Y,
             };

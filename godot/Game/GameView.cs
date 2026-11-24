@@ -179,6 +179,8 @@ public partial class GameView : Node
         });
         box.AddChild(Ui.Label(msg, 13, Colors.White));
         _toasts.AddChild(box);
+        // Keep at most four messages on screen (fast-forward can produce many at once)
+        while (_toasts.GetChildCount() > 4) _toasts.GetChild(0).Free();
         GetTree().CreateTimer(error ? 4 : 2.6).Timeout += () => box.QueueFree();
     }
 

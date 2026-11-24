@@ -222,6 +222,7 @@ public partial class SidePanel : PanelContainer
         {
             int missing = G.DriverDemand(d.Id) - G.DriversOf(d.Id).Count;
             if (missing > 0) warnings.Add(($"{d.Name}: {missing} Fahrer fehlen", () => UI.Select(new("depot", d.Id)), null));
+            foreach (var w in DepotWarnings(d)) warnings.Add(($"{d.Name}: {w}", () => UI.Select(new("depot", d.Id)), null));
         }
         if (warnings.Count > 0)
         {
@@ -267,8 +268,24 @@ public partial class SidePanel : PanelContainer
         var word = l.Mode == ModeId.Tram ? ("Tram fehlt", "Trams fehlen") : ("Bus fehlt", "Busse fehlen");
         if (missing > 0) w.Add($"{missing} {(missing == 1 ? word.Item1 : word.Item2)} für den Fahrplan");
         if (l.DriverShortage) w.Add("Fahrermangel – Fahrzeuge bleiben im Betriebshof");
+        if (l.MaintenanceShortage) w.Add("Nicht genug einsatzbereite Fahrzeuge (Werkstatt oder Laden)");
+        if (l.Comfort < 0.4) w.Add("Fahrzeuge verschmutzt – weniger Fahrgäste (Waschanlage bauen)");
         return w;
     }
+
+    /// <summary>Missing yard services for the vehicles a depot has.</summary>
+    private List<string> DepotWarnings(Depot d)
+    {
+        var w = new List<string>();
+        var fleet = G.Vehicles.Values.Where(v => v.DepotId == d.Id).ToList();
+        if (fleet.Count == 0) return w;
+        if (d.Layout.CountConnected(ModuleType.Workshop) == 0) w.Add("keine Werkstatt – Fahrzeuge verschleißen");
+        if (fleet.Any(v => v.Def.Electric) && d.Layout.CountConnected(ModuleType.Charger) == 0) w.Add("E-Busse ohne Ladestation");
+        if (fleet.Any(v => v.State == VehicleState.Broken)) w.Add("Fahrzeug mit Panne");
+        return w;
+    }
+
+    private static string Pct(double v) => $"{Math.Round(v * 100)} %";
 
     // ---------------------------------------------------------------- tools
 
@@ -416,9 +433,23 @@ public partial class SidePanel : PanelContainer
         kv.Add("Streckenlänge (Umlauf)", Util.Dist(l.Runs.Sum(r => r.Path.Length)));
         Bind(kv.Add("Einstiege heute"), () => Util.Num(l.PassengersToday));
         Bind(kv.Add("Einnahmen heute"), () => Util.Money(l.RevenueToday));
+        Bind(kv.Add("Sauberkeit (Ø im Einsatz)"), () => Pct(l.Comfort));
 
         Space();
         Add(Ui.Section("Fahrzeugpool"));
+        var models = Modes.Get(l.Mode).Models;
+        if (models.Count > 1)
+        {
+            var mrow = new HBoxContainer();
+            mrow.AddChild(Ui.Label("Neue Fahrzeuge:", 13, Ui.Muted));
+            var current = Modes.Model(l.Mode, l.PreferredModel);
+            var choice = Choice(models.Select(m => $"{m.Name} ({Util.Money(m.Price)})").ToArray(), models.ToList().IndexOf(current),
+                i => { l.PreferredModel = models[i].Id; _dirty = true; });
+            choice.TooltipText = string.Join("\n", models.Select(m => $"{m.Name}: {m.Description}"));
+            choice.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            mrow.AddChild(choice);
+            Add(mrow);
+        }
         var pool = G.VehiclesOf(l);
         var step = new HBoxContainer();
         step.AddThemeConstantOverride("separation", 8);
@@ -429,7 +460,8 @@ public partial class SidePanel : PanelContainer
         Add(step);
         foreach (var v in pool)
             Bind(Ui.Row(_box, v.Name, "", () => UI.Select(new("vehicle", v.Id))),
-                () => v.State == VehicleState.Depot ? "Reserve" : $"{v.Passengers.Count}/{cap} · {VehicleStatus(v)}");
+                () => (v.State == VehicleState.Depot ? (Game.ReadyForService(v) ? "Reserve" : "Wartung") : $"{v.Passengers.Count}/{v.Def.Capacity} · {VehicleStatus(v)}")
+                      + $" · {Pct(v.Condition)}");
         Actions().AddChild(Ui.Btn("Linie löschen", UI.DeleteSelected, danger: true));
     }
 
@@ -533,17 +565,23 @@ public partial class SidePanel : PanelContainer
             _ => "Fährt zum Linienstart",
         },
         VehicleState.Layover => "Wendezeit",
+        VehicleState.Broken => "Panne",
         VehicleState.Moving => "Unterwegs",
         _ => "An Haltestelle",
     };
 
     private void VehiclePanel(Vehicle v)
     {
-        var def = Modes.Get(v.Mode).Vehicle;
+        var def = v.Def;
         Header("Fahrzeug");
         NameField(v.Name, n => v.Name = n);
         var kv = new Ui.KeyValues(_box);
         kv.Add("Typ", def.Name);
+        Bind(kv.Add("Zustand"), () => Pct(v.Condition) + (v.Condition < 0.5 ? "  ⚠ Pannengefahr" : ""));
+        Bind(kv.Add("Sauberkeit"), () => Pct(v.Cleanliness));
+        if (def.Electric) Bind(kv.Add("Akku"), () => $"{Pct(v.Charge)} (≈ {Math.Round(v.Charge * def.RangeKm)} km)");
+        Bind(kv.Add("Pannen"), () => v.Breakdowns.ToString());
+        Bind(kv.Add("Alter"), () => $"{Math.Floor((G.Time - v.BoughtAt) / 86400)} Tage");
         Bind(kv.Add("Status"), () =>
         {
             var line = v.LineId is int lid && G.Lines.TryGetValue(lid, out var l) ? l : null;
@@ -569,7 +607,7 @@ public partial class SidePanel : PanelContainer
         var a = Actions();
         if (v.LineId != null) a.AddChild(Ui.Btn("Zum Betriebshof", () => G.AssignVehicle(v.Id, null)));
         if (v.State == VehicleState.Depot)
-            a.AddChild(Ui.Btn($"Verkaufen ({Util.Money(def.Price * 0.5)})", () => { G.SellVehicle(v.Id); UI.Select(null); }, danger: true));
+            a.AddChild(Ui.Btn($"Verkaufen ({Util.Money(Game.ResaleValue(v))})", () => { G.SellVehicle(v.Id); UI.Select(null); }, danger: true));
     }
 
     private static string Shift(double s) => $"{(int)(s / 3600)}:{(int)(s % 3600 / 60):00} h";
@@ -578,8 +616,8 @@ public partial class SidePanel : PanelContainer
 
     private void DepotPanel(Depot d)
     {
-        var def = Modes.Get(d.Mode).Vehicle;
         Header(d.Mode == ModeId.Tram ? "Tram-Betriebshof" : "Betriebshof");
+        foreach (var w in DepotWarnings(d)) Warn(w);
         NameField(d.Name, n => { d.Name = n; _dirty = true; });
         var vs = G.Vehicles.Values.Where(v => v.DepotId == d.Id).OrderBy(v => v.Id).ToList();
         var kv = new Ui.KeyValues(_box);
@@ -587,11 +625,22 @@ public partial class SidePanel : PanelContainer
         if (vs.Count >= d.Layout.VehicleCapacity(d.Mode)) spots.AddThemeColorOverride("font_color", Ui.Danger);
         Bind(kv.Add("Davon im Hof"), () => vs.Count(v => v.State == VehicleState.Depot).ToString());
         kv.Add("Fahrerplätze", $"{G.DriversOf(d.Id).Count} / {d.Layout.DriverCapacity()}");
-        Actions().AddChild(Ui.Btn("Betriebshof bearbeiten (3D)", () => UI.EditDepot(d.Id)));
-        Actions().AddChild(Ui.Btn($"+ {def.Name} kaufen ({Util.Money(def.Price)})", () =>
+        Bind(kv.Add("Werkstatt / Wäsche / Laden"), () =>
+            $"{d.Repairing} / {d.Washing}" + (d.Mode == ModeId.Bus ? $" / {d.Charging}" : ""));
+        kv.Add("Werkstätten · Waschanlagen" + (d.Mode == ModeId.Bus ? " · Ladest." : ""),
+            $"{d.Layout.CountConnected(ModuleType.Workshop)} · {d.Layout.CountConnected(ModuleType.Wash)}"
+            + (d.Mode == ModeId.Bus ? $" · {d.Layout.CountConnected(ModuleType.Charger)}" : ""));
+        Actions().AddChild(Ui.Btn("Betriebshof bearbeiten (3D)", () => UI.EditDepot(d.Id), primary: true));
+        var buy = Actions();
+        foreach (var model in Modes.Get(d.Mode).Models)
         {
-            if (G.BuyVehicle(d.Id) is Vehicle nv) Toast($"{nv.Name} gekauft");
-        }, primary: true, disabled: !G.CanAfford(def.Price) || G.FreeSpots(d) <= 0));
+            var b = Ui.Btn($"+ {model.Name} ({Util.Money(model.Price)})", () =>
+            {
+                if (G.BuyVehicle(d.Id, model.Id) is Vehicle nv) Toast($"{nv.Name} gekauft");
+            }, disabled: !G.CanAfford(model.Price) || !G.CanHouse(d, model));
+            b.TooltipText = model.Description;
+            buy.AddChild(b);
+        }
 
         // Staff
         Space();

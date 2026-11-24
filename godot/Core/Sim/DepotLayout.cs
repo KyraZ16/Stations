@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Stations.Core.Sim;
 
-public enum ModuleType { Road, BusSpot, TramSpot, Office, Workshop, Wash }
+public enum ModuleType { Road, BusSpot, TramSpot, Office, Workshop, Wash, LongBusSpot, Charger }
 
 public sealed record ModuleDef(
     ModuleType Type,
@@ -47,9 +47,11 @@ public sealed class DepotLayout
         [ModuleType.Road] = new(ModuleType.Road, "Fahrweg", 1, 1, 2_000, 0.05, "4a4f56", "Verbindet Stellplätze und Gebäude mit der Einfahrt"),
         [ModuleType.BusSpot] = new(ModuleType.BusSpot, "Busstellplatz", 1, 5, 10_000, 0.04, "8d9096", "+1 Bus (Stirnseite muss am Fahrweg liegen)"),
         [ModuleType.TramSpot] = new(ModuleType.TramSpot, "Abstellgleis", 1, 12, 60_000, 0.06, "b8ada0", "+1 Tram (Stirnseite muss am Gleis liegen)"),
+        [ModuleType.LongBusSpot] = new(ModuleType.LongBusSpot, "Gelenkbus-Stellplatz", 1, 7, 14_000, 0.04, "7f8794", "+1 Bus bis 21 m, auch Gelenkbusse"),
         [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 150_000, 7, "d9cbb0", $"Platz für {DriversPerOffice} Fahrer"),
-        [ModuleType.Workshop] = new(ModuleType.Workshop, "Werkstatt", 4, 6, 400_000, 9, "9fb3c8", "Wartung – Wirkung folgt in einer späteren Version"),
-        [ModuleType.Wash] = new(ModuleType.Wash, "Waschanlage", 2, 6, 120_000, 5, "a8d0d8", "Fahrzeugwäsche – Wirkung folgt in einer späteren Version"),
+        [ModuleType.Workshop] = new(ModuleType.Workshop, "Werkstatt", 4, 6, 400_000, 9, "9fb3c8", "Repariert 2 Fahrzeuge gleichzeitig (+25 % Zustand pro Stunde)"),
+        [ModuleType.Wash] = new(ModuleType.Wash, "Waschanlage", 2, 6, 120_000, 5, "a8d0d8", "Wäscht ein Fahrzeug nach dem anderen (15 min pro Wäsche)"),
+        [ModuleType.Charger] = new(ModuleType.Charger, "Ladestation", 1, 1, 60_000, 2.2, "3fae6a", "Lädt einen E-Bus (voll in 3 Stunden)"),
     };
 
     public static ModuleDef Def(ModuleType t) => Defs[t];
@@ -109,7 +111,7 @@ public sealed class DepotLayout
     {
         if (m.Type == ModuleType.Road) return reach.Contains((m.X, m.Y));
         IEnumerable<(int, int)> access;
-        bool spot = m.Type is ModuleType.BusSpot or ModuleType.TramSpot;
+        bool spot = IsSpot(m.Type);
         if (spot && m.Rot % 2 == 0)
             access = Enumerable.Range(m.X, m.W).SelectMany(i => new[] { (i, m.Y - 1), (i, m.Y + m.H) });
         else if (spot)
@@ -120,11 +122,46 @@ public sealed class DepotLayout
         return access.Any(reach.Contains);
     }
 
+    public static bool IsSpot(ModuleType t) => t is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot;
+
+    private static bool SpotFor(ModuleType t, ModeId mode) =>
+        mode == ModeId.Tram ? t == ModuleType.TramSpot : t is ModuleType.BusSpot or ModuleType.LongBusSpot;
+
+    /// <summary>Usable length of a parking spot in meters.</summary>
+    public static double SpotLength(PlacedModule m) => Def(m.Type).H * CellSize;
+
+    /// <summary>Number of connected service buildings of a type.</summary>
+    public int CountConnected(ModuleType type)
+    {
+        var reach = Reachable();
+        return Modules.Count(m => m.Type == type && IsConnected(m, reach));
+    }
+
+    /// <summary>
+    /// Assign vehicles (by length) to connected spots: longest vehicles first, each to the
+    /// shortest spot that fits. Returns spot per vehicle index (null if it does not fit).
+    /// </summary>
+    public PlacedModule?[] Assign(IReadOnlyList<double> lengths, ModeId mode)
+    {
+        var free = ConnectedSpots(mode).OrderBy(SpotLength).ToList();
+        var result = new PlacedModule?[lengths.Count];
+        foreach (int i in Enumerable.Range(0, lengths.Count).OrderByDescending(i => lengths[i]))
+        {
+            var spot = free.FirstOrDefault(s => SpotLength(s) >= lengths[i]);
+            if (spot == null) continue;
+            result[i] = spot;
+            free.Remove(spot);
+        }
+        return result;
+    }
+
+    /// <summary>Do all these vehicles find a fitting spot?</summary>
+    public bool Fits(IReadOnlyList<double> lengths, ModeId mode) => Assign(lengths, mode).All(s => s != null);
+
     public int VehicleCapacity(ModeId mode)
     {
         var reach = Reachable();
-        var spot = mode == ModeId.Tram ? ModuleType.TramSpot : ModuleType.BusSpot;
-        return Modules.Count(m => m.Type == spot && IsConnected(m, reach));
+        return Modules.Count(m => SpotFor(m.Type, mode) && IsConnected(m, reach));
     }
 
     public int DriverCapacity()
@@ -137,8 +174,7 @@ public sealed class DepotLayout
     public List<PlacedModule> ConnectedSpots(ModeId mode)
     {
         var reach = Reachable();
-        var spot = mode == ModeId.Tram ? ModuleType.TramSpot : ModuleType.BusSpot;
-        return Modules.Where(m => m.Type == spot && IsConnected(m, reach)).OrderBy(m => m.Y).ThenBy(m => m.X).ToList();
+        return Modules.Where(m => SpotFor(m.Type, mode) && IsConnected(m, reach)).OrderBy(m => m.Y).ThenBy(m => m.X).ToList();
     }
 
     /// <summary>

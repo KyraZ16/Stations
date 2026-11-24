@@ -46,6 +46,7 @@ public partial class Main : Node
             game.Advance(3 * 3600); // 05:00 → 08:00, morning peak
         }
         if (_dev.ContainsKey("tooltest")) ToolTest(game, _view!.Interaction);
+        if (_dev.TryGetValue("days", out var dd) && int.TryParse(dd, out int days)) game.Advance(days * 86400.0);
         if (_dev.TryGetValue("time", out var hh) && double.TryParse(hh, System.Globalization.CultureInfo.InvariantCulture, out double hour))
         {
             // fast-forward to the given clock hour (next occurrence)
@@ -62,6 +63,8 @@ public partial class Main : Node
                 game.PlaceModule(d0, Core.Sim.ModuleType.Road, 16, 8, 0);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Wash, 17, 8, 1);
                 game.PlaceModule(d0, Core.Sim.ModuleType.Workshop, 2, 9, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.LongBusSpot, 18, 0, 0);
+                game.PlaceModule(d0, Core.Sim.ModuleType.Charger, 17, 6, 0);
             }
             if (_dev["depot"] == "tram") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.Tram).Id);
             else _view!.OpenDepotEditor(game.Depots.Values.First().Id);
@@ -78,6 +81,13 @@ public partial class Main : Node
                 foreach (var ch in n.GetChildren()) Dump(ch, indent + "  ");
             }
             Dump(GetTree().Root.FindChild("SidePanel", true, false)!, "");
+        }
+        if (_dev.TryGetValue("select", out var sel))
+        {
+            var ui = _view!.Interaction;
+            if (sel == "depot" && game.Depots.Count > 0) ui.Select(new Selection("depot", game.Depots.Values.First().Id));
+            if (sel == "vehicle" && game.Vehicles.Count > 0) ui.Select(new Selection("vehicle", game.Vehicles.Values.MinBy(v => v.Condition)!.Id));
+            if (sel == "line" && game.Lines.Count > 0) ui.Select(new Selection("line", game.Lines.Values.First().Id));
         }
         if (_dev.TryGetValue("shot", out var shot)) TakeShot(shot);
     }

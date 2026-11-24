@@ -140,7 +140,7 @@ public partial class NetworkLayer : Node2D
         foreach (var v in Game.Vehicles.Values)
         {
             if (v.State == VehicleState.Depot) continue;
-            var def = Modes.Get(v.Mode).Vehicle;
+            var def = v.Def;
             float len = Mathf.Max((float)def.Length, 15 * px), wid = Mathf.Max((float)def.Width, 7 * px);
             bool sel = IsSel("vehicle", v.Id);
             var line = v.LineId is int lid && Game.Lines.TryGetValue(lid, out var l) ? l : null;
@@ -156,7 +156,8 @@ public partial class NetworkLayer : Node2D
             if (load > 0) DrawRect(new Rect2(inner.Position, new Vector2(inner.Size.X * load, inner.Size.Y)), Colors.White);
             // Windscreen marks the driving direction
             DrawRect(new Rect2(len / 2 - nose, -wid / 2, nose, wid), Palette.Ink);
-            DrawRect(body, sel ? Palette.Highlight : Palette.Ink, false, (sel ? 3 : 1.6f) * px);
+            bool broken = v.State == VehicleState.Broken;
+            DrawRect(body, sel ? Palette.Highlight : broken ? new Color("e53935") : Palette.Ink, false, (sel || broken ? 3 : 1.6f) * px);
         }
         DrawSetTransform(Vector2.Zero);
     }
