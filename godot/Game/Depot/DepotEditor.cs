@@ -297,11 +297,12 @@ public partial class DepotEditor : Node3D
                 case ModuleType.Road:
                     AddBox(node, ground + new Vector3(0, 0.03f, 0), new Vector3(Cell, 0.06f, Cell), ok ? Asphalt : warn, shadow: false);
                     break;
-                case ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot or ModuleType.MetroSpot:
+                case ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot or ModuleType.MetroSpot or ModuleType.SBahnSpot or ModuleType.TrainSpot:
                 {
-                    AddBox(node, ground + new Vector3(0, 0.025f, 0), new Vector3(fp.X, 0.05f, fp.Z), ok ? Asphalt : warn, shadow: false);
+                    bool rails = m.Type is ModuleType.TramSpot or ModuleType.MetroSpot or ModuleType.SBahnSpot or ModuleType.TrainSpot;
+                    AddBox(node, ground + new Vector3(0, 0.025f, 0), new Vector3(fp.X, 0.05f, fp.Z), !ok ? warn : rails ? Mat("8f877c") : Asphalt, shadow: false); // ballast under tracks
                     var lineSize = vertical ? new Vector3(0.14f, 0.06f, fp.Z - 0.4f) : new Vector3(fp.X - 0.4f, 0.06f, 0.14f);
-                    if (m.Type is ModuleType.TramSpot or ModuleType.MetroSpot)
+                    if (rails)
                     {
                         // two rails on sleepers
                         var railOff = vertical ? new Vector3(0.72f, 0.12f, 0) : new Vector3(0, 0.12f, 0.72f);
