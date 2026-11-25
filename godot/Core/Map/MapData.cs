@@ -36,6 +36,8 @@ public sealed class MapLine
     public MapLineKind Kind;
     public double[] Pts = Array.Empty<double>();
     public bool Tunnel;
+    /// <summary>OSM service tag of railways (yard, siding, spur, crossover), null for main lines.</summary>
+    public string? Service;
 }
 
 /// <summary>Demand zone: buildings aggregated on a grid.</summary>
@@ -235,7 +237,7 @@ public sealed class MapData
                 {
                     m.Lines.Add(new MapLine
                     {
-                        Kind = kind, Pts = pts,
+                        Kind = kind, Pts = pts, Service = Tag(t, "service"),
                         Tunnel = Tag(t, "tunnel") == "yes" || Tag(t, "location") == "underground" || (Tag(t, "layer")?.StartsWith('-') ?? false),
                     });
                 }

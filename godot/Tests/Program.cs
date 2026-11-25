@@ -406,5 +406,24 @@ var mRestored = Game.Restore(map, SaveData.FromJson(mg.Serialize().ToJson()));
 Check(mRestored.Metro.Edges.Count == 4 && mRestored.Stops.Values.Count(s => s.Mode == ModeId.Metro) == 4 && mRestored.Lines.Values.Any(l => l.Name == "U1"),
     "Tunnel, U-Bahnhöfe und Linie werden gespeichert");
 
+Console.WriteLine("== S-Bahn");
+var sg = new Game(map, sandbox: true, seed: 41);
+Check(sg.Rail.Edges.Count > 100 && sg.Rail.Edges.All(e => !e.Built), $"Bahnnetz aus der Karte ({Util.Dist(sg.Rail.Length())})");
+var s1 = DemoNetwork.BuildSBahn(sg);
+Check(s1 != null && s1.Name == "S1" && s1.StopIds.Count >= 3, $"Linie S1 auf den Bahnstrecken ({s1?.StopIds.Count} S-Bahnhöfe: {string.Join(", ", s1?.StopIds.Select(id => sg.Stops[id].Name) ?? new List<string>())})");
+Check(sg.Depots.Values.Any(d => d.Mode == ModeId.SBahn) && sg.VehiclesOf(s1!).All(v => v.ModelId == "sbahn") && sg.VehiclesOf(s1!).Count > 0,
+    $"S-Bahn-Betriebshof und {sg.VehiclesOf(s1!).Count} S-Bahn-Züge");
+var sStop = sg.Stops[s1!.StopIds[1]];
+Check(sg.AddStop(sg.SnapFor(ModeId.SBahn, sStop.Pos.X + 100, sStop.Pos.Y, 200)!.Value, ModeId.SBahn) == null, "S-Bahnhöfe brauchen Abstand");
+var railStart = (sStop.Pos.X, sStop.Pos.Y);
+int builtBefore = sg.Rail.Edges.Count;
+Check(sg.BuildPiece(ModeId.SBahn, sg.SnapNetPoint(ModeId.SBahn, railStart.X, railStart.Y, 5), (railStart.X + 400, railStart.Y + 600)), "eigenes Gleis an die Strecke angedockt");
+Check(sg.Rail.Edges.Count(e => e.Built) == 1, "neues Gleis ist als selbst gebaut markiert");
+Check(sg.RemovePieceAt(ModeId.SBahn, sStop.Pos.X, sStop.Pos.Y, 3) && sg.Rail.Edges.Count(e => !e.Built) >= builtBefore - 1, "bestehende Bahnstrecken lassen sich nicht abreißen");
+sg.Advance(3 * 3600);
+Check(s1.StopIds.Sum(id => sg.Stops[id].BoardedToday) > 0, $"Fahrgäste fahren S-Bahn ({s1.StopIds.Sum(id => sg.Stops[id].BoardedToday)})");
+var sRest = Game.Restore(map, SaveData.FromJson(sg.Serialize().ToJson()));
+Check(sRest.Rail.Edges.Count(e => e.Built) == 1 && sRest.Lines.Values.Any(l => l.Name == "S1" && l.StopIds.Count == s1.StopIds.Count), "S-Bahn und eigene Gleise werden gespeichert");
+
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

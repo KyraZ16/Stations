@@ -57,7 +57,7 @@ public partial class CoverageLayer : Node2D
         var served = Game.Lines.Values.Where(l => double.IsFinite(Game.Headway(l)))
             .SelectMany(l => l.StopIds).Distinct()
             .Select(id => Game.Stops.TryGetValue(id, out var s) ? s : null).OfType<Stop>()
-            .Select(s => (s.Pos.X, s.Pos.Y, R: s.Mode == Core.ModeId.Metro ? Router.MetroAccessRadius : Router.AccessRadius)).ToArray();
+            .Select(s => (s.Pos.X, s.Pos.Y, R: Router.AccessFor(s.Mode))).ToArray();
         foreach (var (start, count, b) in _ranges)
         {
             bool ok = false;

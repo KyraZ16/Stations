@@ -117,7 +117,7 @@ public sealed partial class Game
     private string StreetName(RoadPos pos, ModeId mode = ModeId.Bus)
     {
         // U-Bahn positions are on the tunnel graph: name them after the street above
-        if (IsMetro(mode)) return Map.Graph.Snap(pos.X, pos.Y, 300) is RoadPos above ? StreetName(above) : "";
+        if (UsesNet(mode)) return Map.Graph.Snap(pos.X, pos.Y, 300) is RoadPos above ? StreetName(above) : "";
         int way = Map.Graph.SegWay[pos.Seg];
         return way >= 0 && way < Map.Roads.Count ? Map.Roads[way].Name : "";
     }
@@ -134,14 +134,14 @@ public sealed partial class Game
 
     /// <summary>Where a vehicle of this mode can be: roads for buses, tracks for trams.</summary>
     public RoadPos? SnapFor(ModeId mode, double x, double y, double maxDist) =>
-        IsMetro(mode) ? MetroGraph.Snap(x, y, maxDist)
+        NetFor(mode) is TrackNet net ? net.Graph.Snap(x, y, maxDist)
         : UsesTracks(mode) ? Map.Graph.Snap(x, y, maxDist, Tracks.Contains) : Map.Graph.Snap(x, y, maxDist);
 
     /// <summary>Trams have their own right of way: faster than road traffic, capped by the vehicle.</summary>
     private double TrackSpeed(int seg) => Map.Graph.SegSpd[seg] / MapData.TrafficFactor * 0.9;
 
     public RouteResult? RouteFor(ModeId mode, RoadPos a, RoadPos b) =>
-        IsMetro(mode) ? MetroGraph.RouteSegs(a, b, _ => true, s => MetroGraph.SegSpd[s]) :
+        NetFor(mode) is TrackNet net ? net.Graph.RouteSegs(a, b, _ => true, s => net.Graph.SegSpd[s]) :
         UsesTracks(mode) ? Map.Graph.RouteSegs(a, b, Tracks.Contains, TrackSpeed) : Map.Graph.Route(a, b);
 
     /// <summary>Route for laying new track along any road (both directions).</summary>
@@ -223,14 +223,14 @@ public sealed partial class Game
 
     public Stop? AddStop(RoadPos pos, ModeId mode = ModeId.Bus)
     {
-        if (StopAt(pos.X, pos.Y, IsMetro(mode) ? MinStationGap : 30, mode) != null)
+        if (StopAt(pos.X, pos.Y, UsesNet(mode) ? MinStationGap(mode) : 30, mode) != null)
         {
-            Notify(IsMetro(mode) ? $"Zu nah an einem anderen U-Bahnhof (mindestens {MinStationGap:F0} m)" : "Zu nah an einer anderen Haltestelle", true);
+            Notify(UsesNet(mode) ? $"Zu nah an einem anderen {(IsMetro(mode) ? "U" : "S")}-Bahnhof (mindestens {MinStationGap(mode):F0} m)" : "Zu nah an einer anderen Haltestelle", true);
             return null;
         }
-        if (IsMetro(mode) && (pos.Seg < 0 || pos.Seg >= MetroGraph.SegmentCount))
+        if (NetFor(mode) is TrackNet sn && (pos.Seg < 0 || pos.Seg >= sn.Graph.SegmentCount))
         {
-            Notify("U-Bahnhöfe liegen an Tunneln – baue zuerst einen Tunnel (G)", true);
+            Notify(IsMetro(mode) ? "U-Bahnhöfe liegen an Tunneln – baue zuerst einen Tunnel (G)" : "S-Bahnhöfe liegen an Bahngleisen", true);
             return null;
         }
         if (UsesTracks(mode) && !Tracks.Contains(pos.Seg))
@@ -241,7 +241,7 @@ public sealed partial class Game
         if (!Pay(Modes.Get(mode).StopCost)) return null;
         int id = _nextId++;
         string street = StreetName(pos, mode);
-        var stop = new Stop { Id = id, Mode = mode, Pos = pos, Name = UniqueStopName(street != "" ? street : IsMetro(mode) ? $"U-Bahnhof {id}" : $"Haltestelle {id}", mode) };
+        var stop = new Stop { Id = id, Mode = mode, Pos = pos, Name = UniqueStopName(street != "" ? street : IsMetro(mode) ? $"U-Bahnhof {id}" : IsRail(mode) ? $"S-Bahnhof {id}" : $"Haltestelle {id}", mode) };
         Stops[id] = stop;
         OnChange();
         return stop;
@@ -278,15 +278,15 @@ public sealed partial class Game
             Notify("Tram-Betriebshöfe müssen an Gleisen liegen", true);
             return null;
         }
-        if (IsMetro(mode) && (pos.Seg < 0 || pos.Seg >= MetroGraph.SegmentCount))
+        if (NetFor(mode) is TrackNet dn && (pos.Seg < 0 || pos.Seg >= dn.Graph.SegmentCount))
         {
-            Notify("U-Bahn-Betriebshöfe liegen an Tunneln – baue zuerst einen Tunnel (G)", true);
+            Notify(IsMetro(mode) ? "U-Bahn-Betriebshöfe liegen an Tunneln – baue zuerst einen Tunnel (G)" : "S-Bahn-Betriebshöfe liegen an Bahngleisen", true);
             return null;
         }
         if (!Pay(Modes.Get(mode).DepotCost)) return null;
         int id = _nextId++;
         string street = StreetName(pos, mode);
-        string kind = mode switch { ModeId.Tram => "Tram-Betriebshof", ModeId.Metro => "U-Bahn-Betriebshof", _ => "Betriebshof" };
+        string kind = mode switch { ModeId.Tram => "Tram-Betriebshof", ModeId.Metro => "U-Bahn-Betriebshof", ModeId.SBahn => "S-Bahn-Betriebshof", _ => "Betriebshof" };
         var depot = new Depot
         {
             Id = id, Mode = mode, Pos = pos, Name = street != "" ? $"{kind} {street}" : $"{kind} {id}",

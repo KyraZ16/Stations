@@ -30,6 +30,7 @@ public partial class NetworkLayer : Node2D
     {
         float px = 1 / Zoom; // one screen pixel in world meters
         DrawTunnels(px);
+        DrawRail(px);
         DrawTracks(px);
         DrawTrackPlan(px);
         DrawTunnelPlan(px);
@@ -72,7 +73,7 @@ public partial class NetworkLayer : Node2D
     /// <summary>Ghost of the stop/depot that a click would place.</summary>
     private void DrawSnapPreview(float px)
     {
-        if (UI.Tool == Tool.Track && Game.IsMetro(UI.Mode))
+        if (UI.Tool == Tool.Track && Game.UsesNet(UI.Mode))
         {
             if (UI.TunnelHover is { } th)
             {
@@ -124,15 +125,53 @@ public partial class NetworkLayer : Node2D
                 DrawCircle(V(n.X, n.Y), 4 * px, new Color("3b4452"));
     }
 
+    private Vector2[] _railBase = Array.Empty<Vector2>(), _railBuilt = Array.Empty<Vector2>();
+    private int _railVersion = -1;
+    private static readonly Color RailHighlight = new("008d4f") { A = 0.45f };
+
+    /// <summary>
+    /// S-Bahn network: tracks the player laid always (like tram tracks); the railway from the map is
+    /// highlighted while the S-Bahn mode is active, so it is clear where stations can go.
+    /// </summary>
+    private void DrawRail(float px)
+    {
+        bool sbahn = Game.IsRail(UI.Mode) && UI.Tier == Tier.City;
+        bool anyBuilt = Game.Stops.Values.Any(s => s.Mode == ModeId.SBahn) || sbahn;
+        if (!anyBuilt) return;
+        var net = Game.Rail;
+        if (_railVersion != net.Version)
+        {
+            _railVersion = net.Version;
+            Vector2[] Segs(bool built) => net.Edges.Where(e => e.Built == built).SelectMany(e => new[]
+            {
+                V(net.Nodes[e.A].X, net.Nodes[e.A].Y), V(net.Nodes[e.B].X, net.Nodes[e.B].Y),
+            }).ToArray();
+            _railBase = Segs(false);
+            _railBuilt = Segs(true);
+        }
+        if (sbahn && _railBase.Length > 0) DrawMultiline(_railBase, RailHighlight, 4 * px); // thin: station throats have dozens of parallel tracks
+        if (_railBuilt.Length > 0)
+        {
+            DrawMultiline(_railBuilt, Palette.TrackOuter, Mathf.Max(7.5f, 12 * px));
+            DrawMultiline(_railBuilt, Palette.TrackInner, Mathf.Max(4.5f, 8 * px));
+        }
+        if (UI.Tool == Tool.Track && sbahn)
+            foreach (var e in net.Edges.Where(e => e.Built))
+            {
+                DrawCircle(V(net.Nodes[e.A].X, net.Nodes[e.A].Y), 4 * px, new Color("008d4f"));
+                DrawCircle(V(net.Nodes[e.B].X, net.Nodes[e.B].Y), 4 * px, new Color("008d4f"));
+            }
+    }
+
     /// <summary>Tunnel being planned: dashed from the start point to the cursor, with length and price.</summary>
     private void DrawTunnelPlan(float px)
     {
-        if (UI.Tool != Tool.Track || !Game.IsMetro(UI.Mode)) return;
+        if (UI.Tool != Tool.Track || !Game.UsesNet(UI.Mode)) return;
         if (UI.TunnelStart is { } s) DrawCircle(V(s.X, s.Y), 6 * px, new Color("1f4e9c"));
         if (UI.TunnelPlan is not TunnelPlan plan) return;
         var a = V(plan.X1, plan.Y1);
         var b = V(plan.X2, plan.Y2);
-        var col = plan.Error == null && Game.CanAfford(plan.Cost) ? new Color("1f4e9c") : new Color("c62828");
+        var col = plan.Error == null && Game.CanAfford(plan.Cost) ? new Color(Game.IsRail(UI.Mode) ? "008d4f" : "1f4e9c") : new Color("c62828");
         DrawDashedLine(a, b, new Color(col, 0.75f), Mathf.Max(6f, 10 * px), 12 * px);
         string text = plan.Error ?? $"{Util.Dist(plan.Length)} · {Util.Money(plan.Cost)}";
         DrawSetTransform(b, 0, new Vector2(px, px));
@@ -235,9 +274,9 @@ public partial class NetworkLayer : Node2D
             var pos = new Vector2((float)d.Pos.X, (float)d.Pos.Y);
             DrawSetTransform(pos, 0, new Vector2(px, px)); // draw in screen pixels
             var r = new Rect2(-9, -9, 18, 18);
-            DrawRect(r, d.Mode switch { ModeId.Tram => new Color("5b3f8c"), ModeId.Metro => new Color("1f4e9c"), _ => new Color("2d3640") });
+            DrawRect(r, d.Mode switch { ModeId.Tram => new Color("5b3f8c"), ModeId.Metro => new Color("1f4e9c"), ModeId.SBahn => new Color("008d4f"), _ => new Color("2d3640") });
             DrawRect(r, sel ? Palette.Highlight : Colors.White, false, 2);
-            DrawString(_font, new Vector2(-9, 5), d.Mode switch { ModeId.Tram => "T", ModeId.Metro => "U", _ => "B" }, HorizontalAlignment.Center, 18, 12, Colors.White);
+            DrawString(_font, new Vector2(-9, 5), d.Mode switch { ModeId.Tram => "T", ModeId.Metro => "U", ModeId.SBahn => "S", _ => "B" }, HorizontalAlignment.Center, 18, 12, Colors.White);
         }
         DrawSetTransform(Vector2.Zero);
     }
@@ -257,7 +296,15 @@ public partial class NetworkLayer : Node2D
             float r = stopR + (sel || hover ? 2 : 0);
             var ring = UI.DraftStops.Any(d => d.Id == s.Id) ? Palette.Ink
                 : lineColor.TryGetValue(s.Id, out var c) ? c : new Color("555555");
-            if (s.Mode == ModeId.Metro)
+            if (s.Mode == ModeId.SBahn)
+            {
+                // S-Bahnhof: green circle with a white S, ringed in the line color
+                float m = r + 2;
+                DrawCircle(Vector2.Zero, m + 1.5f, ring);
+                DrawCircle(Vector2.Zero, m, new Color("008d4f"));
+                DrawString(_font, new Vector2(-m, 4.5f), "S", HorizontalAlignment.Center, 2 * m, 12, Colors.White);
+            }
+            else if (s.Mode == ModeId.Metro)
             {
                 // U-Bahnhof: blue square with a white U, ringed in the line color
                 float m = r + 2;

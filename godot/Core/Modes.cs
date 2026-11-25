@@ -68,6 +68,11 @@ public static class Modes
         Id = "ubahn", LifeKm = 15000, RepairCostPerPercent = 3000, Description = "40 m · 330 Plätze · Stromschiene, Einstieg an allen Türen",
     };
 
+    private static readonly VehicleDef SBahnZug = new("S-Bahn-Zug", 500, 100 / 3.6, 10_000_000, 150, 8, 66, 3)
+    {
+        Id = "sbahn", LifeKm = 20000, RepairCostPerPercent = 3500, Description = "66 m · 500 Plätze · 100 km/h, Einstieg an allen Türen",
+    };
+
     private static readonly VehicleDef Niederflurtram = new("Niederflurtram", 180, 60 / 3.6, 2_500_000, 25, 2, 30, 2.4)
     {
         Id = "niederflurtram", LifeKm = 12000, RepairCostPerPercent = 1500, Description = "30 m · 180 Plätze",
@@ -88,8 +93,8 @@ public static class Modes
             40_000, 3_000_000, 2_500),
         [ModeId.Metro] = new(ModeId.Metro, "U-Bahn", Tier.City, "Ⓤ", true, Infra.Metro, UBahnZug, new[] { UBahnZug },
             15_000_000, 25_000_000, 30_000),
-        [ModeId.SBahn] = new(ModeId.SBahn, "S-Bahn", Tier.City, "Ⓢ", false, Infra.Rail,
-            new VehicleDef("S-Bahn-Zug", 900, 120 / 3.6, 10_000_000, 150, 8, 140, 3), Array.Empty<VehicleDef>(), 8_000_000, 25_000_000),
+        [ModeId.SBahn] = new(ModeId.SBahn, "S-Bahn", Tier.City, "Ⓢ", true, Infra.Rail, SBahnZug, new[] { SBahnZug },
+            8_000_000, 25_000_000, 12_000),
         [ModeId.Train] = new(ModeId.Train, "Regionalzug", Tier.Regional, "🚆", false, Infra.Rail,
             new VehicleDef("Triebwagen", 500, 160 / 3.6, 12_000_000, 180, 10, 120, 3), Array.Empty<VehicleDef>(), 5_000_000, 30_000_000),
     };

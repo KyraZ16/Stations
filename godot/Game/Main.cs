@@ -48,6 +48,13 @@ public partial class Main : Node
             DemoNetwork.Build(game);
             game.Advance(3 * 3600); // 05:00 → 08:00, morning peak
         }
+        if (_dev.ContainsKey("sbahn"))
+        {
+            DemoNetwork.BuildSBahn(game);
+            _view!.Interaction.SetTier(Core.Tier.City);
+            _view!.Interaction.SwitchMode(Core.ModeId.SBahn);
+            game.Advance(1800);
+        }
         if (_dev.ContainsKey("metro"))
         {
             DemoNetwork.BuildMetro(game);
@@ -93,6 +100,7 @@ public partial class Main : Node
         if (_dev.ContainsKey("depot") && game.Depots.Count > 0)
         {
             if (_dev["depot"] == "tram") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.Tram).Id);
+            else if (_dev["depot"] == "sbahn") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.SBahn).Id);
             else if (_dev["depot"] == "metro") _view!.OpenDepotEditor(game.Depots.Values.First(d => d.Mode == Core.ModeId.Metro).Id);
             else _view!.OpenDepotEditor(game.Depots.Values.First().Id);
             float? camDist = _dev.TryGetValue("camdist", out var cd) && float.TryParse(cd, System.Globalization.CultureInfo.InvariantCulture, out float cdv) ? cdv : null;

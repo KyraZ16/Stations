@@ -58,7 +58,7 @@ public partial class ToolBar : PanelContainer
         foreach (var t in Interaction.Tools)
         {
             if (t.TracksOnly && !UI.ModeBuildsInfra) continue;
-            string name = t.Tool == Tool.Track ? UI.InfraToolName : t.Tool == Tool.Stop && Game.IsMetro(UI.Mode) ? "U-Bahnhof" : t.Name;
+            string name = t.Tool == Tool.Track ? UI.InfraToolName : t.Tool == Tool.Stop && Game.IsMetro(UI.Mode) ? "U-Bahnhof" : t.Tool == Tool.Stop && Game.IsRail(UI.Mode) ? "S-Bahnhof" : t.Name;
             var b = Toggle($"{t.Icon}   {name}", UI.Tool == t.Tool, () => UI.SetTool(t.Tool));
             b.Alignment = HorizontalAlignment.Left;
             b.TooltipText = $"Taste {t.Key}";

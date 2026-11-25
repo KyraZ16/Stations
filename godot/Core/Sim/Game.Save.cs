@@ -26,6 +26,8 @@ public sealed class SaveData
     /// <summary>U-Bahn tunnels: points (x, y) and pieces (index pairs).</summary>
     public List<double[]>? MetroNodes { get; set; }
     public List<int[]>? MetroEdges { get; set; }
+    /// <summary>S-Bahn tracks the player laid (x1, y1, x2, y2), on top of the railway from the map.</summary>
+    public List<double[]>? RailPieces { get; set; }
     public List<DayStats> History { get; set; } = new();
     /// <summary>Monthly passes in circulation (sold at customer centers).</summary>
     public double Subscribers { get; set; }
@@ -140,6 +142,7 @@ public sealed partial class Game
             History = History.ToList(),
             MetroNodes = Metro.Nodes.Select(n => new[] { Math.Round(n.X, 2), Math.Round(n.Y, 2) }).ToList(),
             MetroEdges = Metro.Edges.Select(e => new[] { e.A, e.B }).ToList(),
+            RailPieces = SaveRail(),
             Subscribers = Subscribers,
             Points = Points,
             Researched = Researched.ToList(),
@@ -165,6 +168,7 @@ public sealed partial class Game
         foreach (var id in data.Researched ?? new()) if (ResearchTree.All.Any(r => r.Id == id)) g.Researched.Add(id);
         var graph = map.Graph;
         g.LoadMetro(data.MetroNodes, data.MetroEdges);
+        g.LoadRail(data.RailPieces);
         foreach (var t in data.Tracks ?? new())
         {
             if (graph.Snap(t[0], t[1], 1.5) is RoadPos p) g.Tracks.Add(p.Seg);

@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Stations.Core.Sim;
 
-public enum ModuleType { Road, BusSpot, TramSpot, Office, Workshop, Wash, LongBusSpot, Charger, ServiceCenter, PlanningOffice, MetroSpot }
+public enum ModuleType { Road, BusSpot, TramSpot, Office, Workshop, Wash, LongBusSpot, Charger, ServiceCenter, PlanningOffice, MetroSpot, SBahnSpot }
 
 public sealed record ModuleDef(
     ModuleType Type,
@@ -57,6 +57,7 @@ public sealed partial class DepotLayout
         [ModuleType.Road] = new(ModuleType.Road, "Fahrweg", 1, 1, 2_000, 0.05, "4a4f56", "Verbindet Stellplätze und Gebäude mit der Einfahrt"),
         [ModuleType.BusSpot] = new(ModuleType.BusSpot, "Busstellplatz", 1, 5, 10_000, 0.04, "8d9096", "+1 Bus (Stirnseite muss am Fahrweg liegen)"),
         [ModuleType.MetroSpot] = new(ModuleType.MetroSpot, "U-Bahn-Abstellgleis", 1, 14, 400_000, 0.06, "a9a39a", "+1 U-Bahn-Zug bis 42 m (Stirnseite muss am Gleis liegen)"),
+        [ModuleType.SBahnSpot] = new(ModuleType.SBahnSpot, "S-Bahn-Abstellgleis", 1, 23, 600_000, 0.06, "a9a39a", "+1 S-Bahn-Zug bis 69 m (Stirnseite muss am Gleis liegen)"),
         [ModuleType.TramSpot] = new(ModuleType.TramSpot, "Abstellgleis", 1, 12, 60_000, 0.06, "b8ada0", "+1 Tram (Stirnseite muss am Gleis liegen)"),
         [ModuleType.LongBusSpot] = new(ModuleType.LongBusSpot, "Gelenkbus-Stellplatz", 1, 7, 14_000, 0.04, "7f8794", "+1 Bus bis 21 m, auch Gelenkbusse"),
         [ModuleType.Office] = new(ModuleType.Office, "Sozialgebäude", 3, 3, 153_000, 7, "d9cbb0", $"Frei aufziehbar (ab 2×2): {StaffPerCell} Mitarbeiter je Feld (3×3 = {DriversPerOffice}), Umkleide und Pausenraum wachsen mit"),
@@ -196,12 +197,12 @@ public sealed partial class DepotLayout
         return access.Any(reach.Contains);
     }
 
-    public static bool IsSpot(ModuleType t) => t is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot or ModuleType.MetroSpot;
+    public static bool IsSpot(ModuleType t) => t is ModuleType.BusSpot or ModuleType.LongBusSpot or ModuleType.TramSpot or ModuleType.MetroSpot or ModuleType.SBahnSpot;
 
     /// <summary>Parking spot type of a mode's depot.</summary>
     public static ModuleType SpotType(ModeId mode) => mode switch
     {
-        ModeId.Tram => ModuleType.TramSpot, ModeId.Metro => ModuleType.MetroSpot, _ => ModuleType.BusSpot,
+        ModeId.Tram => ModuleType.TramSpot, ModeId.Metro => ModuleType.MetroSpot, ModeId.SBahn => ModuleType.SBahnSpot, _ => ModuleType.BusSpot,
     };
 
     private static bool SpotFor(ModuleType t, ModeId mode) =>
@@ -209,6 +210,7 @@ public sealed partial class DepotLayout
         {
             ModeId.Tram => t == ModuleType.TramSpot,
             ModeId.Metro => t == ModuleType.MetroSpot,
+            ModeId.SBahn => t == ModuleType.SBahnSpot,
             _ => t is ModuleType.BusSpot or ModuleType.LongBusSpot,
         };
 
@@ -343,8 +345,9 @@ public sealed partial class DepotLayout
         var l = new DepotLayout();
         if (mode == ModeId.Tram) l.Height = 20;
         if (mode == ModeId.Metro) l.Height = 22;
+        if (mode == ModeId.SBahn) l.Height = 31;
         int cx = l.Width / 2;
-        int crossY = mode switch { ModeId.Tram => 13, ModeId.Metro => 15, _ => 7 };
+        int crossY = mode switch { ModeId.Tram => 13, ModeId.Metro => 15, ModeId.SBahn => 24, _ => 7 };
         void Road(int x, int y)
         {
             if (l.ModuleAt(x, y) == null) l.Modules.Add(new PlacedModule { Type = ModuleType.Road, X = x, Y = y });

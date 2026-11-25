@@ -65,7 +65,7 @@ public sealed partial class Game
             return null;
         }
         var used = Lines.Values.Select(l => l.Name).ToHashSet();
-        string prefix = IsMetro(mode) ? "U" : "";
+        string prefix = IsMetro(mode) ? "U" : IsRail(mode) ? "S" : "";
         int n = 1;
         while (used.Contains(prefix + n)) n++;
         int id = _nextId++;
@@ -437,6 +437,7 @@ public sealed partial class Game
             {
                 ModeId.Tram => "Baue zuerst einen Tram-Betriebshof an den Gleisen",
                 ModeId.Metro => "Baue zuerst einen U-Bahn-Betriebshof an einem Tunnel",
+                ModeId.SBahn => "Baue zuerst einen S-Bahn-Betriebshof an den Gleisen",
                 _ => "Baue zuerst einen Betriebshof",
             }, true);
             return;

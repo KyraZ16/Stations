@@ -21,6 +21,13 @@ public sealed class Router
     public const double AccessRadius = 500; // m, max walk to a stop
     private const double TransferRadius = 250;
     public const double MetroAccessRadius = 800; // m, U-Bahn stations
+    public const double RailAccessRadius = 1000; // m, S-Bahn stations
+
+    /// <summary>How far people walk to a stop of this mode.</summary>
+    public static double AccessFor(ModeId mode) => mode switch
+    {
+        ModeId.Metro => MetroAccessRadius, ModeId.SBahn => RailAccessRadius, _ => AccessRadius,
+    };
     private const double MetroTransferRadius = 350;
     private const double BoardPenalty = 90; // s, perceived cost of each boarding
     private const double MaxWait = 900;
@@ -85,7 +92,7 @@ public sealed class Router
             var a = _stops[i].Pos;
             var b = _stops[j].Pos;
             double d = Util.Hypot(a.X - b.X, a.Y - b.Y);
-            bool metro = _stops[i].Mode == ModeId.Metro || _stops[j].Mode == ModeId.Metro;
+            bool metro = Game.UsesNet(_stops[i].Mode) || Game.UsesNet(_stops[j].Mode);
             if (d < (metro ? MetroTransferRadius : TransferRadius)) _adj[i].Add(new Edge(j, d * WalkDetour / WalkSpeed + 60, EdgeKind.Walk));
         }
 
@@ -99,8 +106,8 @@ public sealed class Router
                 var p = _stops[i].Pos;
                 double d = Util.Hypot(p.X - cell.X, p.Y - cell.Y);
                 // U-Bahn stations draw passengers from further away; the way down to the platform costs a minute
-                if (_stops[i].Mode == ModeId.Metro ? d < MetroAccessRadius : d < AccessRadius)
-                    acc.Add((i, d * WalkDetour / WalkSpeed + (_stops[i].Mode == ModeId.Metro ? 60 : 0)));
+                if (d < AccessFor(_stops[i].Mode))
+                    acc.Add((i, d * WalkDetour / WalkSpeed + (Game.UsesNet(_stops[i].Mode) ? 60 : 0)));
             }
             CellAccess.Add(acc);
             if (acc.Count > 0)

@@ -75,6 +75,10 @@ public partial class Interaction : Node
         Tool.Stop when Game.IsMetro(mode) => "Klicke auf einen Tunnel, um einen U-Bahnhof zu setzen",
         Tool.Depot when Game.IsMetro(mode) => "Klicke auf einen Tunnel, um einen U-Bahn-Betriebshof zu bauen",
         Tool.Line when Game.IsMetro(mode) => "U-Bahnhöfe nacheinander anklicken (auf Tunneln entstehen neue) · Enter: fertig · Rechtsklick: letzten entfernen",
+        Tool.Track when Game.IsRail(mode) => "Punkte nacheinander anklicken – neue Gleise verlaufen gerade und docken an die Bahnstrecken an · Rechtsklick/Esc: neu ansetzen",
+        Tool.Stop when Game.IsRail(mode) => "Klicke auf eine Bahnstrecke (hervorgehoben), um einen S-Bahnhof zu setzen",
+        Tool.Depot when Game.IsRail(mode) => "Klicke auf eine Bahnstrecke, um einen S-Bahn-Betriebshof zu bauen",
+        Tool.Line when Game.IsRail(mode) => "S-Bahnhöfe nacheinander anklicken (auf Bahnstrecken entstehen neue) · Enter: fertig · Rechtsklick: letzten entfernen",
         Tool.Select => "Klick: Auswählen · Ziehen: Verschieben · Mausrad: Zoomen · Leertaste: Pause · F5: Speichern",
         Tool.Stop => "Klicke auf eine Straße, um eine Haltestelle zu setzen · Rechtsklick: zurück",
         Tool.Line => "Haltestellen oder Straßen nacheinander anklicken · Enter: fertig · Rechtsklick: letzte entfernen · erste Haltestelle erneut: Ringlinie",
@@ -90,7 +94,7 @@ public partial class Interaction : Node
 
     public bool ModeUsesTracks => Game.UsesTracks(Mode);
     /// <summary>The mode has its own infrastructure to build first (tram tracks, U-Bahn tunnels).</summary>
-    public bool ModeBuildsInfra => Game.UsesTracks(Mode) || Game.IsMetro(Mode);
+    public bool ModeBuildsInfra => Game.UsesTracks(Mode) || Game.UsesNet(Mode);
 
     /// <summary>Name of the infrastructure tool in the current mode.</summary>
     public string InfraToolName => Game.IsMetro(Mode) ? "Tunnel bauen" : "Gleise bauen";
@@ -168,10 +172,10 @@ public partial class Interaction : Node
         HoverStop = null;
         HoverPos = null;
         if (Tool == Tool.Select) return;
-        if (Tool == Tool.Track && Game.IsMetro(Mode))
+        if (Tool == Tool.Track && Game.UsesNet(Mode))
         {
-            TunnelHover = Game.SnapTunnelPoint(world.X, world.Y, SnapDist);
-            var plan = TunnelStart is { } ts ? Game.PlanTunnel(ts, TunnelHover.Value) : null;
+            TunnelHover = Game.SnapNetPoint(Mode, world.X, world.Y, SnapDist);
+            var plan = TunnelStart is { } ts ? Game.PlanPiece(Mode, ts, TunnelHover.Value) : null;
             if (plan?.Length != TunnelPlan?.Length) { TunnelPlan = plan; Changed(); }
             return;
         }
@@ -221,7 +225,7 @@ public partial class Interaction : Node
             case Tool.Edit:
                 EditClick(w.X, w.Y);
                 break;
-            case Tool.Track when Game.IsMetro(Mode):
+            case Tool.Track when Game.UsesNet(Mode):
                 TunnelClick(w.X, w.Y);
                 break;
             case Tool.Track:
@@ -235,7 +239,7 @@ public partial class Interaction : Node
                 }
                 else if (!Game.RemoveTrackAt(w.X, w.Y, 10 / Map.Zoom))
                 {
-                    Game.RemoveTunnelAt(w.X, w.Y, 10 / Map.Zoom);
+                    Game.RemoveNetPieceAt(w.X, w.Y, 10 / Map.Zoom);
                 }
                 break;
         }
@@ -272,7 +276,7 @@ public partial class Interaction : Node
     private RoadPos? SnapBuild(ModeId mode, double x, double y)
     {
         var pos = Game.SnapFor(mode, x, y, SnapDist);
-        if (pos == null) Toast(Game.IsMetro(mode) ? NeedsTunnel : Game.UsesTracks(mode) ? NeedsTrack : "Hier ist keine befahrbare Straße", true);
+        if (pos == null) Toast(Game.IsMetro(mode) ? NeedsTunnel : Game.IsRail(mode) ? "Hier liegt keine Bahnstrecke – S-Bahnhöfe kommen auf die hervorgehobenen Gleise" : Game.UsesTracks(mode) ? NeedsTrack : "Hier ist keine befahrbare Straße", true);
         return pos;
     }
 
@@ -351,7 +355,7 @@ public partial class Interaction : Node
         SetTool(Tool.Select);
         Select(new("line", line.Id));
         bool tram = line.Mode == ModeId.Tram;
-        bool metro = line.Mode == ModeId.Metro;
+        bool metro = Game.UsesNet(line.Mode);
         if (Game.Depots.Values.Any(d => d.Mode == line.Mode))
         {
             // Equip the line for its default timetable: vehicles for the peak, drivers for the shifts.
@@ -363,7 +367,7 @@ public partial class Interaction : Node
         }
         else
         {
-            Toast($"Linie {line.Name} erstellt – baue einen {(metro ? "U-Bahn-Betriebshof" : tram ? "Tram-Betriebshof" : "Betriebshof")}, um Fahrzeuge einzusetzen");
+            Toast($"Linie {line.Name} erstellt – baue einen {(line.Mode == ModeId.SBahn ? "S-Bahn-Betriebshof" : metro ? "U-Bahn-Betriebshof" : tram ? "Tram-Betriebshof" : "Betriebshof")}, um Fahrzeuge einzusetzen");
         }
     }
 
@@ -518,14 +522,14 @@ public partial class Interaction : Node
 
     private void TunnelClick(double x, double y)
     {
-        var p = Game.SnapTunnelPoint(x, y, SnapDist);
+        var p = Game.SnapNetPoint(Mode, x, y, SnapDist);
         if (TunnelStart is not { } start)
         {
             TunnelStart = p;
             Changed();
             return;
         }
-        if (Game.BuildTunnel(start, p))
+        if (Game.BuildPiece(Mode, start, p))
         {
             TunnelStart = p;
             TunnelPlan = null;
