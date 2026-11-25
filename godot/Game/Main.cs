@@ -134,6 +134,13 @@ public partial class Main : Node
             var ui = _view!.Interaction;
             if (sel == "depot" && game.Depots.Count > 0) ui.Select(new Selection("depot", game.Depots.Values.First().Id));
             if (sel == "research") ui.Select(new Selection("research", 0));
+            if (sel == "stop" && game.Stops.Count > 0)
+            {
+                // the busiest station (not an exit)
+                var st = game.Stops.Values.Where(x => !x.Portal && game.LinesAtStop(x.Id).Count > 0).MaxBy(x => x.Waiting.Count + x.BoardedToday)!;
+                ui.Select(new Selection("stop", st.Id));
+                ui.Map.CenterOn(new Vector2((float)st.Pos.X, (float)st.Pos.Y));
+            }
             if (sel == "vehicle" && game.Vehicles.Count > 0)
             {
                 var veh = game.Vehicles.Values.Where(v => v.State == VehicleState.Moving).DefaultIfEmpty(game.Vehicles.Values.First()).MinBy(v => v!.Condition)!;
@@ -254,6 +261,8 @@ public partial class Main : Node
             loading.Report(2, 0, $"{osm.Ways.Count:N0} Wege und {osm.Nodes.Count:N0} Knoten");
             var map = await Task.Run(() => MapData.Build(area, osm, p => loading.Report(2, (float)p)), ct);
             if (map.Graph.SegmentCount == 0) throw new InvalidDataException("In diesem Gebiet wurden keine Straßen gefunden.");
+            // District and city names (optional: without them stations are named after streets, exits after directions)
+            map.AddPlaces(await Overpass.LoadPlacesAsync(area, SaveStore.CacheDir, msg => loading.Report(2, 1, msg), ct));
 
             loading.Report(3, 0.3f, save != null ? "Spielstand wird geladen, Linien werden berechnet …" : "Neues Spiel wird angelegt …");
             var game = await Task.Run(() => save != null ? Game.Restore(map, save) : new Game(map, choice.Sandbox), ct);

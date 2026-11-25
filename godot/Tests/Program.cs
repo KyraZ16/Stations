@@ -21,11 +21,14 @@ Console.WriteLine("== Karte laden");
 string json = await Overpass.LoadAsync(area, cacheDir, msg => Console.WriteLine("  " + msg));
 var osm = OsmData.Parse(json);
 var map = MapData.Build(area, osm);
+map.AddPlaces(await Overpass.LoadPlacesAsync(area, cacheDir, msg => Console.WriteLine("  " + msg)));
 Console.WriteLine($"  {sw.ElapsedMilliseconds} ms · Straßen {map.Roads.Count} · Segmente {map.Graph.SegmentCount} · " +
                   $"Gebäude {map.Buildings.Count} · Zellen {map.Cells.Count} · Flächen {map.Polys.Count}");
 Console.WriteLine($"  Einwohner {map.TotalResidents:F0} · Arbeitsplätze {map.TotalJobs:F0}");
 Check(map.Graph.SegmentCount > 1000, "Straßengraph aufgebaut");
 Check(map.TotalResidents > 10_000 && map.TotalJobs > 10_000, "Einwohner und Arbeitsplätze erkannt");
+Check(map.Places.Count(p => p.IsDistrict) > 5 && map.Places.Count(p => !p.IsDistrict) > 5,
+    $"Ortsteile ({string.Join(", ", map.Places.Where(p => p.Kind == PlaceKind.Suburb).Select(p => p.Name).Take(6))} …) und {map.Places.Count(p => !p.IsDistrict)} Städte im Umland");
 
 Console.WriteLine("== Busnetz bauen");
 var game = new Game(map, sandbox: true, seed: 42);
@@ -443,6 +446,37 @@ rgx.RemoveStop(re1.StopIds[0]);
 Check(rgx.Stops.ContainsKey(re1.StopIds[0]), "Ausfahrten lassen sich nicht abreißen");
 var reRest = Game.Restore(map, SaveData.FromJson(rgx.Serialize().ToJson()));
 Check(reRest.Portals.Count() == exits && reRest.Lines.Values.Any(l => l.Name == "RE1"), "Ausfahrten und RE1 werden gespeichert");
+
+Console.WriteLine("== Namen, Takte, Ausbau");
+Check(rgx.Portals.Count(p => p.Name.StartsWith("Richtung ")) >= exits - 1, $"Ausfahrten nach Städten benannt: {string.Join(", ", rgx.Portals.Select(p => p.Name))}");
+Check(s1!.StopIds.Count(id => map.Places.Any(p => p.IsDistrict && p.Name == sg.Stops[id].Name)) >= 2,
+    $"S-Bahnhöfe nach Ortsteilen benannt: {string.Join(", ", s1.StopIds.Select(id => sg.Stops[id].Name))}");
+Check(Timetable.Default(ModeId.Metro).Headways[1] == 300 && Timetable.Default(ModeId.Train).Headways[2] == 3600 && u1.Timetable.Headways[1] == 300,
+    "Standardtakte: U-Bahn alle 5 min in der HVZ, Regionalzug stündlich am Tag");
+Check(re1.Timetable.Headways[1] == 1800 && s1.Timetable.Headways[2] == 600, "S-Bahn alle 10 min, Regionalzug halbstündlich in der HVZ");
+
+// Station levels: a busy shared bus stop with only two bays makes buses queue; expanding it helps
+var lg = new Game(map, sandbox: true, seed: 61);
+lg.AddDepot(map.Graph.Snap(-200, -900, 300)!.Value);
+var hub = lg.AddStop(map.Graph.Snap(-100, -600, 100)!.Value)!;
+var ends = new[] { (-1600.0, -600.0), (400.0, -600.0), (300.0, -1500.0), (300.0, 0.0) }
+    .Select(p => lg.AddStop(map.Graph.Snap(p.Item1, p.Item2, 200)!.Value)!).ToList();
+var hubLines = ends.Select(e => lg.CreateLine(new List<int> { e.Id, hub.Id }, false)!).ToList();
+foreach (var l in hubLines) { l.Timetable.Headways = new double[] { 300, 300, 300, 300, 300 }; lg.AssignMissing(l); }
+lg.HireMissingDrivers();
+Check(Game.Bays(hub) == 2 && Game.UpgradeCost(hub) is double, $"Haltestelle Stufe 1: {Game.Bays(hub)} Haltepositionen, {Game.WaitingCapacity(hub)} Wartende");
+lg.Advance(3 * 3600);
+int queued = 0;
+for (int s = 0; s < 1800; s += 5) { lg.Advance(5); queued += lg.Vehicles.Values.Count(v => v.Queued); }
+Check(queued > 0, $"Busse stauen sich vor der vollen Haltestelle ({queued} Wartemomente)");
+double catchBefore = Router.AccessFor(hub.Mode) * Game.CatchmentFactor(hub);
+Check(lg.UpgradeStop(hub) && lg.UpgradeStop(hub) && hub.Level == 3 && !lg.UpgradeStop(hub), $"auf Stufe 3 ausgebaut ({Game.LevelName(hub)})");
+Check(Game.Bays(hub) == 8 && Router.AccessFor(hub.Mode) * Game.CatchmentFactor(hub) > catchBefore, "mehr Haltepositionen und größeres Einzugsgebiet");
+int queuedAfter = 0;
+for (int s = 0; s < 1800; s += 5) { lg.Advance(5); queuedAfter += lg.Vehicles.Values.Count(v => v.Queued && lg.Lines[v.LineId!.Value].Runs[v.RunIdx].StopIds[v.StopIdx] == hub.Id); }
+Check(queuedAfter < queued, $"nach dem Ausbau weniger Stau ({queuedAfter})");
+var lRest = Game.Restore(map, SaveData.FromJson(lg.Serialize().ToJson()));
+Check(lRest.Stops[hub.Id].Level == 3, "Ausbaustufe wird gespeichert");
 
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

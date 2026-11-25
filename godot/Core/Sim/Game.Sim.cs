@@ -90,7 +90,9 @@ public sealed partial class Game
             foreach (var s in Stops.Values)
             {
                 int before = s.Waiting.Count;
-                s.Waiting.RemoveAll(p => Time - p.WaitingSince >= MaxWait);
+                // Overcrowded stops: people give up twice as fast
+                double patience = s.Waiting.Count > WaitingCapacity(s) ? MaxWait / 2 : MaxWait;
+                s.Waiting.RemoveAll(p => Time - p.WaitingSince >= patience);
                 Today.Lost += before - s.Waiting.Count;
             }
         }
@@ -260,6 +262,7 @@ public sealed partial class Game
                 break;
             }
             case VehicleState.Moving:
+                if (QueueAtStop(v, r, dt)) break;
                 if (Drive(v, r.Offsets[v.StopIdx], dt)) ServeStop(v, line, r);
                 break;
             case VehicleState.Dwell:

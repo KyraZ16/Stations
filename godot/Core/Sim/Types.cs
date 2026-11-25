@@ -12,6 +12,8 @@ public sealed class Stop
     public int BoardedToday;
     /// <summary>Regional exit at the map edge: stands for the region beyond (not built, not removable).</summary>
     public bool Portal;
+    /// <summary>Expansion level 1–3: more bays/tracks, room for more waiting passengers, a larger catchment.</summary>
+    public int Level = 1;
 }
 
 public sealed class Depot
@@ -198,6 +200,8 @@ public sealed class Vehicle
     public double ArrivedAt;
     public List<Passenger> Passengers = new();
     public double X, Y, Ang;
+    /// <summary>Waiting in front of a stop whose bays/tracks are all taken (runtime).</summary>
+    public bool Queued;
     public double KmTotal;
 }
 

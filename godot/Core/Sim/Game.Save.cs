@@ -46,6 +46,8 @@ public sealed class SaveData
         public double Y { get; set; }
         /// <summary>Regional exit at the map edge (stops only).</summary>
         public bool Portal { get; set; }
+        /// <summary>Expansion level of a stop (0 in older saves = 1).</summary>
+        public int Level { get; set; }
         /// <summary>Depot yard (depots only).</summary>
         public DepotLayout? Layout { get; set; }
     }
@@ -121,7 +123,7 @@ public sealed partial class Game
             Sandbox = Sandbox,
             NextId = _nextId,
             VehicleCounter = _vehicleCounter,
-            Stops = Stops.Values.Select(s => new SaveData.PlacedDto { Id = s.Id, Name = s.Name, Mode = s.Mode, X = s.Pos.X, Y = s.Pos.Y, Portal = s.Portal }).ToList(),
+            Stops = Stops.Values.Select(s => new SaveData.PlacedDto { Id = s.Id, Name = s.Name, Mode = s.Mode, X = s.Pos.X, Y = s.Pos.Y, Portal = s.Portal, Level = s.Level }).ToList(),
             Depots = Depots.Values.Select(d => new SaveData.PlacedDto { Id = d.Id, Name = d.Name, Mode = d.Mode, X = d.Pos.X, Y = d.Pos.Y, Layout = d.Layout }).ToList(),
             Lines = Lines.Values.Select(l => new SaveData.LineDto
             {
@@ -178,7 +180,7 @@ public sealed partial class Game
         foreach (var s in data.Stops)
         {
             if (g.SnapFor(s.Mode, s.X, s.Y, 60) is RoadPos pos)
-                g.Stops[s.Id] = new Stop { Id = s.Id, Name = s.Name, Mode = s.Mode, Pos = pos, Portal = s.Portal };
+                g.Stops[s.Id] = new Stop { Id = s.Id, Name = s.Name, Mode = s.Mode, Pos = pos, Portal = s.Portal, Level = Math.Clamp(s.Level, 1, MaxStopLevel) };
         }
         foreach (var d in data.Depots)
         {
@@ -201,7 +203,7 @@ public sealed partial class Game
             g.Lines[l.Id] = new TransitLine
             {
                 Id = l.Id, Name = l.Name, Color = l.Color, Mode = l.Mode, StopIds = stopIds, Circular = l.Circular,
-                Runs = runs, CycleTime = CycleTime(runs), Timetable = l.Timetable ?? Timetable.Default(), PreferredModel = l.PreferredModel,
+                Runs = runs, CycleTime = CycleTime(runs), Timetable = l.Timetable ?? Timetable.Default(l.Mode), PreferredModel = l.PreferredModel,
             };
         }
         foreach (var vd in data.Vehicles)
@@ -258,6 +260,7 @@ public sealed partial class Game
             foreach (var m in d.Layout.Modules)
                 if (ResearchTree.ForModule(m.Type) is string need) g.Researched.Add(need);
         if (g.Has("ebus")) g.Researched.Add("charge");
+        g.NamePortals(); // exits from older saves get city names once the names are known
         foreach (var d in g.Depots.Values) g.EnsureHomeSpots(d);
         // Vehicles start in the depot; the dispatcher sends them out per timetable.
         g._dispatchTimer = DispatchInterval;

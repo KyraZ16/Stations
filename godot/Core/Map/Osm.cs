@@ -223,6 +223,61 @@ public static class Overpass
         throw new IOException($"OSM-Daten konnten nicht geladen werden ({last?.Message}). Bitte später erneut versuchen.");
     }
 
+    /// <summary>Radius (m) around the map in which cities and towns are loaded (to name the regional exits).</summary>
+    public const double RegionRadius = 90_000;
+
+    /// <summary>Districts inside the map area and cities/towns in the region around it.</summary>
+    public static string BuildPlacesQuery(Area area)
+    {
+        string Box(Area a)
+        {
+            var (s, w, n, e) = Projection.BBox(a);
+            return string.Join(",", new[] { s, w, n, e }.Select(v => v.ToString("F6", CultureInfo.InvariantCulture)));
+        }
+        return $$"""
+            [out:json][timeout:120];
+            (
+              node["place"="suburb"]({{Box(area)}});
+              node["place"="quarter"]({{Box(area)}});
+              node["place"="neighbourhood"]({{Box(area)}});
+              node["place"="city"]({{Box(area with { Radius = RegionRadius })}});
+              node["place"="town"]({{Box(area with { Radius = RegionRadius })}});
+            );
+            out body qt;
+            """;
+    }
+
+    /// <summary>
+    /// Place names for the area (cached like the map data). Returns null if they cannot be loaded –
+    /// the game then names everything after streets and directions.
+    /// </summary>
+    public static async Task<string?> LoadPlacesAsync(Area area, string cacheDir, Action<string> status, CancellationToken ct = default)
+    {
+        Directory.CreateDirectory(cacheDir);
+        string file = Path.Combine(cacheDir, CacheKey(area) + "_places.json");
+        if (File.Exists(file)) return await File.ReadAllTextAsync(file, ct);
+        string query = BuildPlacesQuery(area);
+        foreach (string url in Endpoints)
+        {
+            try
+            {
+                status($"Lade Ortsteile und Städte von {new Uri(url).Host} …");
+                using var content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("data", query) });
+                using var res = await Http.PostAsync(url, content, ct);
+                if (!res.IsSuccessStatusCode) continue;
+                string json = await res.Content.ReadAsStringAsync(ct);
+                if (!json.Contains("\"elements\"")) continue;
+                await File.WriteAllTextAsync(file, json, ct);
+                return json;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // try the next server; names are optional (plain tag filters keep the query cheap for busy servers)
+            }
+        }
+        return null;
+    }
+
     /// <summary>Search a place by name via OSM Nominatim.</summary>
     public static async Task<List<(string Name, double Lat, double Lon)>> SearchPlaceAsync(string q, CancellationToken ct = default)
     {

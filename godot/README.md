@@ -31,7 +31,7 @@ Nach `--` auf der Kommandozeile, z. B.
 - `--tooltest=line|timetable|depot|vehicle|stop|track|draft` baut über die Werkzeuge ein kleines Netz und öffnet das genannte Panel
 - `--time=2` spult auf die angegebene Uhrzeit vor (z. B. nachts, wenn alle Fahrzeuge im Hof stehen)
 - `--depot` öffnet den ersten Betriebshof im 3D-Editor (`--depot=tram` den Tram-Betriebshof, `--depot=edit` mit Beispiel-Bauteilen)
-- `--days=12` spult Tage vor (z. B. um Verschleiß zu sehen), `--select=depot|vehicle|line|research` öffnet ein Panel
+- `--days=12` spult Tage vor (z. B. um Verschleiß zu sehen), `--select=depot|vehicle|line|research|stop` öffnet ein Panel
 - `--interior` öffnet den Betriebshof in der Innenansicht; `--camdist=30`, `--camyaw=0.6`, `--campitch=0.8` und `--camfocus=office|workshop|wash` stellen die Kamera ein
 - `--debugui` listet Panel-Elemente mit auffällig großer Mindestbreite
 
@@ -53,4 +53,7 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] U-Bahn (Stadtweit): Tunnel frei durch die Stadt bauen (G, gerade Stücke von Punkt zu Punkt, Andocken an bestehende Tunnel, 30.000 €/m), U-Bahnhöfe (H, 800 m Einzugsgebiet, mindestens 250 m Abstand) und U-Bahn-Betriebshof (B) auf Tunneln, Linien U1, U2 …; Züge (40 m, 330 Plätze, 80 km/h) mit schnellem Einstieg an allen Türen; Umstieg zu Bus und Tram zu Fuß; 3D-Hof mit 42-m-Abstellgleisen
 - [x] S-Bahn (Stadtweit): fährt auf den echten Bahnstrecken der Karte (OSM rail/light_rail ohne Abstell- und Rangiergleise; im S-Bahn-Modus grün hervorgehoben), eigene Gleise frei dazubauen (G, 12.000 €/m, nur diese lassen sich abreißen), S-Bahnhöfe (1000 m Einzugsgebiet, 400 m Abstand), Linien S1, S2 …, Züge 66 m / 500 Plätze / 100 km/h, Betriebshof mit 69-m-Abstellgleisen
 - [x] Regionalzüge (Regional): Ausfahrten entstehen automatisch, wo die Bahn die Karte verlässt (z. B. „Ausfahrt Nordwest“); jede von einer Regionallinie bediente Ausfahrt bringt Pendler aus dem Umland (rund 2500 Fahrten am Tag, morgens in die Stadt, abends zurück), die in der Stadt umsteigen; Regionalticket 8 €; Regionalbahnhöfe (1200 m Einzugsgebiet, 1 km Abstand), Linien RE1, RE2 …, Züge 75 m / 450 Plätze / 140 km/h, Regio-Betriebshof mit 78-m-Abstellgleisen; teilt die Gleise mit der S-Bahn
+- [x] Namen: Ortsteile und Städte im Umland werden aus OSM nachgeladen (eigener Cache, optional); U-/S-Bahnhöfe und Regionalbahnhöfe heißen nach dem Ortsteil, Ausfahrten nach der Stadt in Fahrtrichtung („Richtung Lübeck“), Ortsteil-Namen stehen auf der Karte
+- [x] Standardtakte je Verkehrsmittel: Bus/Tram 20/10/15/10/20 min, U-Bahn 10/5/7,5/5/10 min, S-Bahn 20/10/10/10/20 min, Regionalzug 60/30/60/30/60 min; eigene Linienfarben für U-Bahn, S-Bahn und Regionalzug
+- [x] Stationen vergrößern: Ausbaustufen 1–3 für alle Haltestellen und Bahnhöfe (mehr Haltepositionen bzw. Gleise, Platz für mehr Wartende, +15 % Einzugsgebiet je Stufe); sind alle Plätze belegt, warten Fahrzeuge vor der Station; überfüllte Stationen lassen Fahrgäste schneller aufgeben
 - [ ] Kampagne

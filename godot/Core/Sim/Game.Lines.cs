@@ -45,6 +45,23 @@ public sealed partial class Game
     /// <summary>Try routing a draft line (for previews).</summary>
     public RouteResult? PreviewRoute(Stop a, Stop b) => RouteFor(a.Mode, a.Pos, b.Pos);
 
+    /// <summary>
+    /// Colors for new lines: U-Bahn, S-Bahn and regional lines get their own families (blue/red/green…, green first
+    /// for the S-Bahn, slate for regional trains), buses and trams the general palette.
+    /// </summary>
+    private string NewLineColor(ModeId mode)
+    {
+        string[] family = mode switch
+        {
+            ModeId.Metro => new[] { "0a5cad", "d6262c", "00965e", "f39200", "8b4c9e", "00a3c7" },
+            ModeId.SBahn => new[] { "16a34a", "dc2626", "0284c7", "a16207", "7c3aed" },
+            ModeId.Train => new[] { "475569", "b91c1c", "1e3a8a", "0f766e", "92400e" },
+            _ => Util.LineColors,
+        };
+        var used = Lines.Values.Select(x => x.Color).ToHashSet();
+        return family.FirstOrDefault(c => !used.Contains(c)) ?? family[Lines.Values.Count(x => x.Mode == mode) % family.Length];
+    }
+
     public TransitLine? CreateLine(List<int> stopIds, bool circular, ModeId mode = ModeId.Bus)
     {
         if (stopIds.Count < 2)
@@ -71,8 +88,8 @@ public sealed partial class Game
         int id = _nextId++;
         var line = new TransitLine
         {
-            Id = id, Name = prefix + n, Mode = mode, StopIds = stopIds.ToList(), Circular = circular, Runs = runs,
-            CycleTime = CycleTime(runs), Color = Util.LineColors[Lines.Count % Util.LineColors.Length],
+            Id = id, Name = prefix + n, Mode = mode, Timetable = Timetable.Default(mode), StopIds = stopIds.ToList(), Circular = circular, Runs = runs,
+            CycleTime = CycleTime(runs), Color = NewLineColor(mode),
         };
         Lines[id] = line;
         _routerDirty = true;

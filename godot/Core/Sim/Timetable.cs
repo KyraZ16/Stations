@@ -23,7 +23,19 @@ public sealed class Timetable
     /// <summary>Selectable headways in seconds.</summary>
     public static readonly double[] HeadwayOptions = { 300, 360, 450, 600, 720, 900, 1200, 1800, 3600 };
 
-    public static Timetable Default() => new() { Start = 5, End = 24, Headways = new double[] { 1200, 600, 900, 600, 1200 } };
+    public static Timetable Default() => Default(ModeId.Bus);
+
+    /// <summary>
+    /// Standard timetable per mode (early, morning peak, day, afternoon peak, evening):
+    /// bus/tram 20/10/15/10/20 min, U-Bahn 10/5/7.5/5/10 min, S-Bahn 20/10/10/10/20 min, regional trains hourly with half-hourly peaks.
+    /// </summary>
+    public static Timetable Default(ModeId mode) => mode switch
+    {
+        ModeId.Metro => new() { Start = 4.5, End = 24.5, Headways = new double[] { 600, 300, 450, 300, 600 } },
+        ModeId.SBahn => new() { Start = 4.5, End = 24.5, Headways = new double[] { 1200, 600, 600, 600, 1200 } },
+        ModeId.Train => new() { Start = 5, End = 23.5, Headways = new double[] { 3600, 1800, 3600, 1800, 3600 } },
+        _ => new() { Start = 5, End = 24, Headways = new double[] { 1200, 600, 900, 600, 1200 } },
+    };
 
     public Timetable Clone() => new() { Start = Start, End = End, Headways = (double[])Headways.Clone() };
 

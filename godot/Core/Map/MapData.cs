@@ -25,6 +25,14 @@ public sealed class Building
     public int Cell = -1;
 }
 
+public enum PlaceKind { City, Town, Suburb, Quarter, Neighbourhood }
+
+/// <summary>A named place: a district inside the map or a city/town in the region around it.</summary>
+public sealed record Place(string Name, PlaceKind Kind, double X, double Y, int Population)
+{
+    public bool IsDistrict => Kind is PlaceKind.Suburb or PlaceKind.Quarter or PlaceKind.Neighbourhood;
+}
+
 public sealed class AreaPoly
 {
     public PolyKind Kind;
@@ -203,6 +211,37 @@ public sealed class MapData
     }
 
     /// <param name="progress">Called with 0..1 while building (any thread).</param>
+    /// <summary>Districts in the map and cities/towns around it (empty if they could not be loaded).</summary>
+    public List<Place> Places { get; } = new();
+
+    /// <summary>Read place names from an Overpass answer (see Overpass.LoadPlacesAsync).</summary>
+    public void AddPlaces(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var el in doc.RootElement.GetProperty("elements").EnumerateArray())
+            {
+                if (!el.TryGetProperty("tags", out var tags) || !tags.TryGetProperty("name", out var nm) || !tags.TryGetProperty("place", out var pl)) continue;
+                var kind = pl.GetString() switch
+                {
+                    "city" => PlaceKind.City, "town" => PlaceKind.Town, "suburb" => PlaceKind.Suburb,
+                    "quarter" => PlaceKind.Quarter, "neighbourhood" => PlaceKind.Neighbourhood, _ => (PlaceKind?)null,
+                };
+                if (kind == null) continue;
+                int pop = 0;
+                if (tags.TryGetProperty("population", out var pe)) int.TryParse((pe.GetString() ?? "").Replace(".", "").Replace(" ", ""), out pop);
+                double lat = el.GetProperty("lat").GetDouble(), lon = el.GetProperty("lon").GetDouble();
+                Places.Add(new Place(nm.GetString() ?? "", kind.Value, Proj.X(lon), Proj.Y(lat), pop));
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // names are optional
+        }
+    }
+
     public static MapData Build(Area area, OsmData osm, Action<double>? progress = null)
     {
         var proj = new Projection(area.Lat, area.Lon);

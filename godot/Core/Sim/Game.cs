@@ -122,6 +122,19 @@ public sealed partial class Game
         return way >= 0 && way < Map.Roads.Count ? Map.Roads[way].Name : "";
     }
 
+    /// <summary>
+    /// Name of the district a station lies in (U-, S-Bahn and regional stations are named like that), if the map
+    /// has district names and no other station of the mode already carries it.
+    /// </summary>
+    private string? DistrictName(double x, double y, ModeId mode)
+    {
+        var used = Stops.Values.Where(s => s.Mode == mode).Select(s => s.Name).ToHashSet();
+        double Reach(PlaceKind k) => k switch { PlaceKind.Suburb => 900, PlaceKind.Quarter => 600, _ => 400 };
+        return Map.Places.Where(p => p.IsDistrict && !used.Contains(p.Name))
+            .Select(p => (p, f: Util.Hypot(p.X - x, p.Y - y) / Reach(p.Kind)))
+            .Where(t => t.f < 1).OrderBy(t => t.f).Select(t => t.p.Name).FirstOrDefault();
+    }
+
     /// <summary>Stop names are unique per mode, so a bus and a tram stop may share a name.</summary>
     private string UniqueStopName(string baseName, ModeId mode)
     {
@@ -240,7 +253,7 @@ public sealed partial class Game
         }
         if (!Pay(Modes.Get(mode).StopCost)) return null;
         int id = _nextId++;
-        string street = StreetName(pos, mode);
+        string street = UsesNet(mode) ? DistrictName(pos.X, pos.Y, mode) ?? StreetName(pos, mode) : StreetName(pos, mode);
         var stop = new Stop { Id = id, Mode = mode, Pos = pos, Name = UniqueStopName(street != "" ? street : IsMetro(mode) ? $"U-Bahnhof {id}" : mode == ModeId.Train ? $"Bahnhof {id}" : IsRail(mode) ? $"S-Bahnhof {id}" : $"Haltestelle {id}", mode) };
         Stops[id] = stop;
         OnChange();

@@ -65,8 +65,35 @@ public sealed partial class Game
                 Name = UniqueStopName($"Ausfahrt {Compass(pos.X, pos.Y)}", ModeId.Train),
             };
         }
+        NamePortals();
         if (Portals.Any()) OnChange();
         return Portals.Count();
+    }
+
+    /// <summary>
+    /// Name the exits after the city or town the railway heads for (largest place roughly in that direction,
+    /// beyond the map). Exits that still carry a direction name are renamed when city names are available.
+    /// </summary>
+    public void NamePortals()
+    {
+        var towns = Map.Places.Where(p => !p.IsDistrict && Util.Hypot(p.X, p.Y) > Map.Half * 1.5).ToList();
+        if (towns.Count == 0) return;
+        var used = new HashSet<string>(Portals.Where(p => p.Name.StartsWith("Richtung ")).Select(p => p.Name));
+        bool changed = false;
+        foreach (var portal in Portals.Where(p => p.Name.StartsWith("Ausfahrt ")).OrderBy(p => p.Id))
+        {
+            double bearing = Math.Atan2(portal.Pos.Y, portal.Pos.X);
+            var best = towns
+                .Select(t => (t, diff: Math.Abs(Math.IEEERemainder(Math.Atan2(t.Y, t.X) - bearing, 2 * Math.PI)), d: Util.Hypot(t.X, t.Y)))
+                .Where(c => c.diff < 0.45 && !used.Contains("Richtung " + c.t.Name))
+                .OrderByDescending(c => (c.t.Population > 0 ? c.t.Population : c.t.Kind == PlaceKind.City ? 100_000 : 10_000) / Math.Sqrt(c.d) * (1 - c.diff))
+                .Select(c => c.t).FirstOrDefault();
+            if (best == null) continue;
+            portal.Name = "Richtung " + best.Name;
+            used.Add(portal.Name);
+            changed = true;
+        }
+        if (changed) OnChange();
     }
 
     /// <summary>Direction of a point seen from the map center (y grows southward).</summary>

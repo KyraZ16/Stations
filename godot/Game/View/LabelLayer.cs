@@ -101,11 +101,42 @@ public partial class LabelLayer : Node2D
         _ => 2.5f,
     };
 
+    /// <summary>
+    /// District names (from OSM places) in capitals: suburbs when zoomed out, quarters and neighbourhoods closer in.
+    /// They take their space first, so street names keep clear of them.
+    /// </summary>
+    private void DrawDistricts(float z, float px, List<Rect2> placed)
+    {
+        foreach (var p in Map.Places.Where(p => p.IsDistrict).OrderBy(p => p.Kind))
+        {
+            var (min, max, size) = p.Kind switch
+            {
+                PlaceKind.Suburb => (0.12f, 1.2f, 16),
+                PlaceKind.Quarter => (0.45f, 2.5f, 13),
+                _ => (0.9f, 4f, 12),
+            };
+            if (z < min || z > max) continue;
+            string text = p.Name.ToUpperInvariant();
+            var ts = _font.GetStringSize(text, HorizontalAlignment.Left, -1, size);
+            var pos = new Vector2((float)p.X, (float)p.Y);
+            var half = new Vector2(ts.X / 2 + 6, size * 0.7f + 4) * px;
+            var box = new Rect2(pos - half, half * 2);
+            if (placed.Any(b => b.Intersects(box))) continue;
+            placed.Add(box);
+            DrawSetTransform(pos, 0, new Vector2(px, px));
+            var at = new Vector2(-ts.X / 2, size * 0.35f);
+            DrawStringOutline(_font, at, text, HorizontalAlignment.Left, -1, size, 5, new Color(1, 1, 1, 0.8f));
+            DrawString(_font, at, text, HorizontalAlignment.Left, -1, size, new Color("6b6358") { A = 0.85f });
+        }
+        DrawSetTransform(Vector2.Zero);
+    }
+
     public override void _Draw()
     {
         float z = Mathf.Max(_drawnZoom, 0.01f);
         float px = 1 / z;
         var placed = new List<Rect2>(); // label boxes in world units, axis-aligned approximation
+        DrawDistricts(z, px, placed);
         foreach (var c in _candidates)
         {
             if (z < MinZoom(c.Cls)) continue;

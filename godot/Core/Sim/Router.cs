@@ -107,7 +107,7 @@ public sealed class Router
                 var p = _stops[i].Pos;
                 double d = Util.Hypot(p.X - cell.X, p.Y - cell.Y);
                 // U-Bahn stations draw passengers from further away; the way down to the platform costs a minute
-                if (!_stops[i].Portal && d < AccessFor(_stops[i].Mode))
+                if (!_stops[i].Portal && d < AccessFor(_stops[i].Mode) * Game.CatchmentFactor(_stops[i]))
                     acc.Add((i, d * WalkDetour / WalkSpeed + (Game.UsesNet(_stops[i].Mode) ? 60 : 0)));
             }
             CellAccess.Add(acc);

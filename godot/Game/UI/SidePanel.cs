@@ -533,8 +533,36 @@ public partial class SidePanel : PanelContainer
         else Header(s.Mode switch { ModeId.Tram => "Tram-Haltestelle", ModeId.Metro or ModeId.SBahn or ModeId.Train => Interaction.StationWord(s.Mode), _ => "Haltestelle" });
         NameField(s.Name, v => s.Name = v);
         var kv = new Ui.KeyValues(_box);
-        Bind(kv.Add("Wartende Fahrgäste"), () => s.Waiting.Count.ToString());
+        var waiting = kv.Add("Wartende Fahrgäste");
+        Bind(waiting, () =>
+        {
+            bool crowded = !s.Portal && s.Waiting.Count > Game.WaitingCapacity(s);
+            waiting.AddThemeColorOverride("font_color", crowded ? Ui.Danger : Ui.Text);
+            return s.Portal ? s.Waiting.Count.ToString() : $"{s.Waiting.Count} / {Game.WaitingCapacity(s)}" + (crowded ? " – überfüllt" : "");
+        });
         Bind(kv.Add("Einstiege heute"), () => Util.Num(s.BoardedToday));
+        if (!s.Portal)
+        {
+            Space();
+            Add(Ui.Section("Ausbau"));
+            var akv = new Ui.KeyValues(_box);
+            akv.Add("Stufe", $"{s.Level} von {Game.MaxStopLevel}: {Game.LevelName(s)}");
+            akv.Add(Game.UsesNet(s.Mode) ? "Gleise" : "Haltepositionen", Game.Bays(s).ToString());
+            akv.Add("Einzugsgebiet", $"{Router.AccessFor(s.Mode) * Game.CatchmentFactor(s):F0} m");
+            Bind(akv.Add("Fahrzeuge warten davor"), () => G.Vehicles.Values.Count(v => v.Queued && v.LineId is int lid &&
+                G.Lines.TryGetValue(lid, out var ql) && v.RunIdx < ql.Runs.Count && v.StopIdx < ql.Runs[v.RunIdx].StopIds.Count &&
+                ql.Runs[v.RunIdx].StopIds[v.StopIdx] == s.Id).ToString());
+            if (Game.UpgradeCost(s) is double up)
+            {
+                var next = new Stop { Mode = s.Mode, Level = s.Level + 1 };
+                Actions().AddChild(Ui.Btn($"Ausbauen: {Game.LevelName(next)} ({Util.Money(up)})", () =>
+                {
+                    if (G.UpgradeStop(s)) Toast($"{s.Name} ausgebaut: {Game.LevelName(s)}");
+                }, primary: true, disabled: !G.CanAfford(up)));
+                Hint($"Stufe {s.Level + 1}: {(Game.UsesNet(s.Mode) ? "Gleise" : "Haltepositionen")} {Game.Bays(next)}, Platz für {Game.WaitingCapacity(next)} Wartende, " +
+                     $"Einzugsgebiet {Router.AccessFor(s.Mode) * Game.CatchmentFactor(next):F0} m. Sind alle belegt, warten weitere Fahrzeuge vor der Station.");
+            }
+        }
         Space();
         Add(Ui.Section("Linien"));
         var lines = G.LinesAtStop(s.Id);
@@ -743,7 +771,7 @@ public partial class SidePanel : PanelContainer
         },
         VehicleState.Layover => "Wendezeit",
         VehicleState.Broken => "Panne",
-        VehicleState.Moving => "Unterwegs",
+        VehicleState.Moving => v.Queued ? "Wartet vor voller Haltestelle" : "Unterwegs",
         _ => "An Haltestelle",
     };
 

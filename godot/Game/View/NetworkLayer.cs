@@ -293,7 +293,7 @@ public partial class NetworkLayer : Node2D
             bool sel = IsSel("stop", s.Id);
             DrawSetTransform(new Vector2((float)s.Pos.X, (float)s.Pos.Y), 0, new Vector2(px, px));
             bool hover = UI.HoverStop?.Id == s.Id;
-            float r = stopR + (sel || hover ? 2 : 0);
+            float r = stopR + (sel || hover ? 2 : 0) + (s.Level - 1) * 1.5f; // expanded stations are drawn larger
             var ring = UI.DraftStops.Any(d => d.Id == s.Id) ? Palette.Ink
                 : lineColor.TryGetValue(s.Id, out var c) ? c : new Color("555555");
             if (s.Portal)
@@ -346,6 +346,7 @@ public partial class NetworkLayer : Node2D
                 DrawCircle(Vector2.Zero, r, Colors.White);
                 DrawArc(Vector2.Zero, r, 0, Mathf.Tau, 24, ring, sel ? 3.5f : 2.5f);
             }
+            if (s.Level >= 3) DrawArc(Vector2.Zero, r + 5, 0, Mathf.Tau, 28, new Color(ring, 0.6f), 1.5f); // hub ring
             int n = s.Waiting.Count;
             if (n > 0 && Zoom > 0.25f)
             {
