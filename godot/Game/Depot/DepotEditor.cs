@@ -276,6 +276,51 @@ public partial class DepotEditor : Node3D
         return (c + new Vector3(0, height / 2, 0), new Vector3(w * Cell, height, h * Cell));
     }
 
+    /// <summary>
+    /// A driveway cell of a tram or train depot is track: rails run from the cell center to every side where
+    /// the next driveway cell, a siding in line or the gate joins (crossings where several meet).
+    /// </summary>
+    private void RailCell(Node3D node, PlacedModule m, Vector3 ground, Material ballast)
+    {
+        AddBox(node, ground + new Vector3(0, 0.025f, 0), new Vector3(Cell, 0.05f, Cell), ballast, shadow: false);
+        bool Joins(int dx, int dy)
+        {
+            int x = m.X + dx, y = m.Y + dy;
+            if (dy == 1 && y >= L.Height) return true; // gate
+            var o = L.ModuleAt(x, y);
+            if (o == null) return false;
+            if (o.Type == ModuleType.Road) return Run(dx, dy) >= 3; // two driveways side by side stay two tracks
+            bool siding = o.Type is ModuleType.TramSpot or ModuleType.MetroSpot or ModuleType.SBahnSpot or ModuleType.TrainSpot;
+            return siding && (dy != 0) == (o.H >= o.W); // a siding joins along its length
+        }
+        bool IsRoad(int x, int y) => L.ModuleAt(x, y)?.Type == ModuleType.Road;
+        // driveway cells in a row through this cell along the axis of (dx, dy)
+        int Run(int dx, int dy)
+        {
+            int ax = Math.Abs(dx), ay = Math.Abs(dy), n = 1;
+            for (int k = 1; IsRoad(m.X + ax * k, m.Y + ay * k); k++) n++;
+            for (int k = 1; IsRoad(m.X - ax * k, m.Y - ay * k); k++) n++;
+            return n;
+        }
+        var dirs = new[] { (1, 0), (-1, 0), (0, 1), (0, -1) }.Where(d => Joins(d.Item1, d.Item2)).ToList();
+        if (dirs.Count == 0) dirs.AddRange(new[] { (0, 1), (0, -1) });
+        if (dirs.Count == 1) dirs.Add((-dirs[0].Item1, -dirs[0].Item2)); // track end: still a full piece
+        var sleeper = Mat("6b5a48");
+        float half = Cell / 2;
+        foreach (var (dx, dy) in dirs)
+        {
+            var along = new Vector3(dx, 0, dy);
+            var across = new Vector3(dy, 0, dx); // perpendicular (sign irrelevant)
+            var mid = ground + along * (half / 2);
+            var railSize = dx != 0 ? new Vector3(half + 0.07f, 0.12f, 0.07f) : new Vector3(0.07f, 0.12f, half + 0.07f);
+            AddBox(node, mid + across * 0.72f + new Vector3(0, 0.12f, 0), railSize, _props.Steel);
+            AddBox(node, mid - across * 0.72f + new Vector3(0, 0.12f, 0), railSize, _props.Steel);
+            foreach (float t in new[] { 0.5f, 1.5f })
+                AddBox(node, ground + along * t + new Vector3(0, 0.05f, 0),
+                    dx != 0 ? new Vector3(0.25f, 0.08f, 2.3f) : new Vector3(2.3f, 0.08f, 0.25f), sleeper, shadow: false);
+        }
+    }
+
     private void RebuildModules()
     {
         foreach (var c in _modulesRoot.GetChildren()) c.QueueFree();
@@ -294,6 +339,9 @@ public partial class DepotEditor : Node3D
             bool vertical = m.H >= m.W;
             switch (m.Type)
             {
+                case ModuleType.Road when Depot.Mode != ModeId.Bus:
+                    RailCell(node, m, ground, ok ? Mat("8f877c") : warn);
+                    break;
                 case ModuleType.Road:
                     AddBox(node, ground + new Vector3(0, 0.03f, 0), new Vector3(Cell, 0.06f, Cell), ok ? Asphalt : warn, shadow: false);
                     break;
