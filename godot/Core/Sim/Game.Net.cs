@@ -6,7 +6,7 @@ public sealed record TunnelPlan(double X1, double Y1, double X2, double Y2, doub
 
 /// <summary>
 /// Rail networks of the city tier. U-Bahn: tunnels the player lays freely through the city.
-/// S-Bahn: the real railway lines from the map (OSM rail and light rail, without yards and sidings)
+/// S-Bahn: the real railway lines from the map (OSM rail and light rail including yards and sidings, with crossovers between parallel tracks)
 /// plus tracks the player adds. Stations and depots sit on the network; lines and trains are routed
 /// over its graph, which is rebuilt after every change.
 /// </summary>
@@ -41,9 +41,9 @@ public sealed partial class Game
     {
         var net = new TrackNet(RailSpeed);
         foreach (var l in Map.Lines)
-            if (l.Kind is MapLineKind.Rail or MapLineKind.LightRail && l.Service is not ("yard" or "siding" or "spur"))
-                net.AddBaseLine(l.Pts);
-        net.Rebuild();
+            if (l.Kind is MapLineKind.Rail or MapLineKind.LightRail)
+                net.AddBaseLine(l.Pts, l.Tunnel ? -1 : 0);
+        net.AddCrossovers();
         return net;
     }
 
@@ -52,9 +52,9 @@ public sealed partial class Game
     {
         var net = NetFor(mode)!;
         foreach (var s in Stops.Values.Where(s => NetFor(s.Mode) == net))
-            if (net.Graph.Snap(s.Pos.X, s.Pos.Y, 2) is RoadPos p) s.Pos = p;
+            if (net.Snap(s.Pos.X, s.Pos.Y, 2) is RoadPos p) s.Pos = p;
         foreach (var d in Depots.Values.Where(d => NetFor(d.Mode) == net))
-            if (net.Graph.Snap(d.Pos.X, d.Pos.Y, 2) is RoadPos p) d.Pos = p;
+            if (net.Snap(d.Pos.X, d.Pos.Y, 2) is RoadPos p) d.Pos = p;
     }
 
     public (double X, double Y) SnapNetPoint(ModeId mode, double x, double y, double r) => NetFor(mode)!.SnapPoint(x, y, r);
@@ -97,7 +97,7 @@ public sealed partial class Game
     public bool RemovePieceAt(ModeId mode, double x, double y, double radius)
     {
         var net = NetFor(mode)!;
-        if (net.Graph.Snap(x, y, radius) is not RoadPos hit) return false;
+        if (net.Snap(x, y, radius) is not RoadPos hit) return false;
         int e = hit.Seg;
         if (!net.Edges[e].Built)
         {

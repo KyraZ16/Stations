@@ -434,6 +434,12 @@ DemoNetwork.Build(rgx);
 int exits = rgx.EnsurePortals();
 Check(exits >= 2, $"Ausfahrten am Kartenrand: {string.Join(", ", rgx.Portals.Select(p => p.Name))}");
 Check(rgx.EnsurePortals() == exits, "Ausfahrten entstehen nur einmal");
+Check(rgx.Rail.Links.Count > 100, $"Querverbindungen zwischen parallelen Gleisen ({rgx.Rail.Links.Count})");
+var hbf = rgx.SnapFor(ModeId.Train, 900, 20, 150);
+var unreachable = rgx.Portals.Where(p => hbf == null || rgx.RouteFor(ModeId.Train, hbf.Value, p.Pos) == null || rgx.RouteFor(ModeId.Train, p.Pos, hbf.Value) == null).Select(p => p.Name).ToList();
+Check(hbf != null && unreachable.Count == 0, $"alle Ausfahrten vom Hauptbahnhof erreichbar (nicht: {string.Join(", ", unreachable)})");
+var hbfTracks = rgx.Rail.Edges.Count(e => Util.DistToSegment(900, 20, rgx.Rail.Nodes[e.A].X, rgx.Rail.Nodes[e.A].Y, rgx.Rail.Nodes[e.B].X, rgx.Rail.Nodes[e.B].Y).D < 60);
+Check(hbfTracks >= 6, $"Gleise am Hauptbahnhof inkl. Abstellgleisen ({hbfTracks} Stücke)");
 var re1 = DemoNetwork.BuildRegional(rgx);
 Check(re1 != null && re1.Name == "RE1" && rgx.Stops[re1.StopIds[0]].Portal && rgx.Stops[re1.StopIds[^1]].Portal,
     $"RE1 von Ausfahrt zu Ausfahrt ({string.Join(" – ", re1?.StopIds.Select(id => rgx.Stops[id].Name) ?? new List<string>())})");

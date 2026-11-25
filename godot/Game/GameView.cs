@@ -141,6 +141,7 @@ public partial class GameView : Node
 
     /// <summary>Zoom the map by a factor around its center (developer option).</summary>
     public void ZoomBy(float factor) => _map.ZoomBy(factor);
+    public void CenterOn(float x, float y) => _map.CenterOn(new Vector2(x, y));
 
     public override void _Process(double delta)
     {

@@ -29,11 +29,11 @@ public sealed partial class Game
         double h = Map.Half - EdgeInset;
         bool Inside((double X, double Y) p) => Math.Abs(p.X) < h && Math.Abs(p.Y) < h;
         var crossings = new List<(double X, double Y)>();
-        foreach (var (a, b, built) in net.Edges)
+        // main lines only: yards and sidings crossing the edge are no way out into the region
+        var pieces = Map.Lines.Where(l => l.Kind is MapLineKind.Rail or MapLineKind.LightRail && l.Service == null)
+            .SelectMany(l => Enumerable.Range(0, l.Pts.Length / 2 - 1).Select(i => (A: (X: l.Pts[2 * i], Y: l.Pts[2 * i + 1]), B: (X: l.Pts[2 * i + 2], Y: l.Pts[2 * i + 3]))));
+        foreach (var (pa, pb) in pieces)
         {
-            if (built) continue;
-            var pa = net.Nodes[a];
-            var pb = net.Nodes[b];
             if (Inside(pa) == Inside(pb)) continue;
             // point on the piece where it crosses the square edge
             double t0 = 0, t1 = 1;
@@ -57,7 +57,7 @@ public sealed partial class Game
         {
             double cx = g.Average(p => p.X), cy = g.Average(p => p.Y);
             var at = g.MinBy(p => Util.Hypot(p.X - cx, p.Y - cy));
-            if (net.Graph.Snap(at.X, at.Y, 30) is not RoadPos pos) continue;
+            if (net.Snap(at.X, at.Y, 30) is not RoadPos pos) continue;
             int id = _nextId++;
             Stops[id] = new Stop
             {

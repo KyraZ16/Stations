@@ -147,7 +147,7 @@ public sealed partial class Game
 
     /// <summary>Where a vehicle of this mode can be: roads for buses, tracks for trams.</summary>
     public RoadPos? SnapFor(ModeId mode, double x, double y, double maxDist) =>
-        NetFor(mode) is TrackNet net ? net.Graph.Snap(x, y, maxDist)
+        NetFor(mode) is TrackNet net ? net.Snap(x, y, maxDist)
         : UsesTracks(mode) ? Map.Graph.Snap(x, y, maxDist, Tracks.Contains) : Map.Graph.Snap(x, y, maxDist);
 
     /// <summary>Trams have their own right of way: faster than road traffic, capped by the vehicle.</summary>
@@ -241,7 +241,7 @@ public sealed partial class Game
             Notify(UsesNet(mode) ? $"Zu nah an einem anderen {(IsMetro(mode) ? "U-Bahnhof" : mode == ModeId.Train ? "Regionalbahnhof" : "S-Bahnhof")} (mindestens {MinStationGap(mode):F0} m)" : "Zu nah an einer anderen Haltestelle", true);
             return null;
         }
-        if (NetFor(mode) is TrackNet sn && (pos.Seg < 0 || pos.Seg >= sn.Graph.SegmentCount))
+        if (NetFor(mode) is TrackNet sn && (pos.Seg < 0 || pos.Seg >= sn.TrackSegs))
         {
             Notify(IsMetro(mode) ? "U-Bahnhöfe liegen an Tunneln – baue zuerst einen Tunnel (G)" : "S-Bahnhöfe liegen an Bahngleisen", true);
             return null;
@@ -296,7 +296,7 @@ public sealed partial class Game
             Notify("Tram-Betriebshöfe müssen an Gleisen liegen", true);
             return null;
         }
-        if (NetFor(mode) is TrackNet dn && (pos.Seg < 0 || pos.Seg >= dn.Graph.SegmentCount))
+        if (NetFor(mode) is TrackNet dn && (pos.Seg < 0 || pos.Seg >= dn.TrackSegs))
         {
             Notify(IsMetro(mode) ? "U-Bahn-Betriebshöfe liegen an Tunneln – baue zuerst einen Tunnel (G)" : "S-Bahn-Betriebshöfe liegen an Bahngleisen", true);
             return null;

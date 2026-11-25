@@ -98,7 +98,7 @@ public static class DemoNetwork
         int best = size.IndexOf(size.Max());
         var nodes = Enumerable.Range(0, g.VertexCount).Where(v => comp[v] == best).ToList();
         int a = nodes.MinBy(v => g.Vx[v] + g.Vy[v] * 0.3), b = nodes.MaxBy(v => g.Vx[v] + g.Vy[v] * 0.3);
-        if (g.Snap(g.Vx[a], g.Vy[a], 2) is not RoadPos pa || g.Snap(g.Vx[b], g.Vy[b], 2) is not RoadPos pb) return null;
+        if (game.Rail.Snap(g.Vx[a], g.Vy[a], 2) is not RoadPos pa || game.Rail.Snap(g.Vx[b], g.Vy[b], 2) is not RoadPos pb) return null;
         var route = game.RouteFor(ModeId.SBahn, pa, pb);
         if (route == null) return null;
         var ids = new List<int>();

@@ -222,7 +222,7 @@ public partial class Interaction : Node
                 if (SnapBuild(Mode, w.X, w.Y) is RoadPos sp && Game.AddStop(sp, Mode) is Stop s) Select(new("stop", s.Id));
                 break;
             case Tool.Depot:
-                if (SnapBuild(Mode, w.X, w.Y) is RoadPos dp && Game.AddDepot(dp, Mode) is Depot d)
+                if (SnapDepot(Mode, w.X, w.Y) is RoadPos dp && Game.AddDepot(dp, Mode) is Depot d)
                 {
                     SetTool(Tool.Select);
                     Select(new("depot", d.Id));
@@ -288,6 +288,20 @@ public partial class Interaction : Node
         if (pos == null) Toast(Game.IsMetro(mode) ? NeedsTunnel : Game.IsRail(mode) ? $"Hier liegt keine Bahnstrecke – {StationWord(mode)}e kommen auf die hervorgehobenen Gleise" : Game.UsesTracks(mode) ? NeedsTrack : "Hier ist keine befahrbare Straße", true);
         return pos;
     }
+
+    /// <summary>
+    /// Bus depots often sit on private grounds whose streets buses may not use in OSM (parking aisles,
+    /// access=private, like a wholesale market). Clicking there connects the depot to the nearest public street.
+    /// </summary>
+    private RoadPos? SnapDepot(ModeId mode, double x, double y)
+    {
+        if (Game.UsesNet(mode) || Game.UsesTracks(mode) || Game.SnapFor(mode, x, y, SnapDist) != null) return SnapBuild(mode, x, y);
+        var pos = Game.SnapFor(mode, x, y, DepotReach);
+        if (pos == null) Toast($"Keine befahrbare Straße im Umkreis von {DepotReach:F0} m", true);
+        return pos;
+    }
+
+    private const double DepotReach = 300; // m
 
     public Selection? Pick(double x, double y, bool vehicles = true)
     {

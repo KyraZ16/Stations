@@ -16,7 +16,7 @@ public partial class Main : Node
     /// <summary>
     /// Developer options after "--" on the command line:
     /// --autostart (Hamburg sandbox), --demo (build demo network, skip to 08:00),
-    /// --shot=path.png (save a screenshot and quit), --zoom=factor (zoom in from the overview),
+    /// --shot=path.png (save a screenshot and quit), --zoom=factor (zoom in from the overview), --center=x,y (world meters),
     /// --loadingshot=path.png (screenshot of the loading screen).
     /// </summary>
     private readonly Dictionary<string, string> _dev = OS.GetCmdlineUserArgs()
@@ -118,6 +118,9 @@ public partial class Main : Node
         }
         if (_dev.TryGetValue("zoom", out var z) && float.TryParse(z, System.Globalization.CultureInfo.InvariantCulture, out float zf))
             _view!.ZoomBy(zf);
+        if (_dev.TryGetValue("center", out var cen) && cen.Split(',') is [var cxs, var cys] &&
+            float.TryParse(cxs, System.Globalization.CultureInfo.InvariantCulture, out float ccx) && float.TryParse(cys, System.Globalization.CultureInfo.InvariantCulture, out float ccy))
+            _view!.CenterOn(ccx, ccy);
         if (_dev.ContainsKey("debugui"))
         {
             for (int i = 0; i < 10; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
