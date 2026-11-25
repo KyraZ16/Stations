@@ -22,11 +22,12 @@ public sealed class Router
     private const double TransferRadius = 250;
     public const double MetroAccessRadius = 800; // m, U-Bahn stations
     public const double RailAccessRadius = 1000; // m, S-Bahn stations
+    public const double RegionalAccessRadius = 1200; // m, regional stations
 
     /// <summary>How far people walk to a stop of this mode.</summary>
     public static double AccessFor(ModeId mode) => mode switch
     {
-        ModeId.Metro => MetroAccessRadius, ModeId.SBahn => RailAccessRadius, _ => AccessRadius,
+        ModeId.Metro => MetroAccessRadius, ModeId.SBahn => RailAccessRadius, ModeId.Train => RegionalAccessRadius, _ => AccessRadius,
     };
     private const double MetroTransferRadius = 350;
     private const double BoardPenalty = 90; // s, perceived cost of each boarding
@@ -106,7 +107,7 @@ public sealed class Router
                 var p = _stops[i].Pos;
                 double d = Util.Hypot(p.X - cell.X, p.Y - cell.Y);
                 // U-Bahn stations draw passengers from further away; the way down to the platform costs a minute
-                if (d < AccessFor(_stops[i].Mode))
+                if (!_stops[i].Portal && d < AccessFor(_stops[i].Mode))
                     acc.Add((i, d * WalkDetour / WalkSpeed + (Game.UsesNet(_stops[i].Mode) ? 60 : 0)));
             }
             CellAccess.Add(acc);
@@ -149,10 +150,29 @@ public sealed class Router
         return j;
     }
 
-    private Journey? Search(int from, int to)
+    /// <summary>
+    /// Journey between a stop (a regional exit at the map edge) and a cell: fromStop = true starts at the stop.
+    /// Null if the stop is not served or no connection exists.
+    /// </summary>
+    public Journey? FindStop(int stopId, int cell, bool fromStop)
     {
-        var src = CellAccess[from];
-        var dst = CellAccess[to];
+        if (!_stopNode.TryGetValue(stopId, out int node)) return null;
+        long key = -(((long)node * 100003 + cell) * 2 + (fromStop ? 1 : 0)) - 1;
+        if (_cache.TryGetValue(key, out var hit)) return hit;
+        var at = new List<(int Node, double Walk)> { (node, 0) };
+        var j = fromStop ? Search(at, CellAccess[cell]) : Search(CellAccess[cell], at);
+        if (_cache.Count > 200_000) _cache.Clear();
+        _cache[key] = j;
+        return j;
+    }
+
+    /// <summary>Is the stop served by an active line?</summary>
+    public bool Serves(int stopId) => _stopNode.ContainsKey(stopId);
+
+    private Journey? Search(int from, int to) => Search(CellAccess[from], CellAccess[to]);
+
+    private Journey? Search(List<(int Node, double Walk)> src, List<(int Node, double Walk)> dst)
+    {
         if (src.Count == 0 || dst.Count == 0) return null;
         int N = _adj.Count;
         var dist = new double[N];

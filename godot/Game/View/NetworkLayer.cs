@@ -135,8 +135,8 @@ public partial class NetworkLayer : Node2D
     /// </summary>
     private void DrawRail(float px)
     {
-        bool sbahn = Game.IsRail(UI.Mode) && UI.Tier == Tier.City;
-        bool anyBuilt = Game.Stops.Values.Any(s => s.Mode == ModeId.SBahn) || sbahn;
+        bool sbahn = Game.IsRail(UI.Mode); // S-Bahn or regional mode: show where trains can run
+        bool anyBuilt = Game.Stops.Values.Any(s => Game.IsRail(s.Mode)) || sbahn;
         if (!anyBuilt) return;
         var net = Game.Rail;
         if (_railVersion != net.Version)
@@ -274,9 +274,9 @@ public partial class NetworkLayer : Node2D
             var pos = new Vector2((float)d.Pos.X, (float)d.Pos.Y);
             DrawSetTransform(pos, 0, new Vector2(px, px)); // draw in screen pixels
             var r = new Rect2(-9, -9, 18, 18);
-            DrawRect(r, d.Mode switch { ModeId.Tram => new Color("5b3f8c"), ModeId.Metro => new Color("1f4e9c"), ModeId.SBahn => new Color("008d4f"), _ => new Color("2d3640") });
+            DrawRect(r, d.Mode switch { ModeId.Tram => new Color("5b3f8c"), ModeId.Metro => new Color("1f4e9c"), ModeId.SBahn => new Color("008d4f"), ModeId.Train => new Color("37474f"), _ => new Color("2d3640") });
             DrawRect(r, sel ? Palette.Highlight : Colors.White, false, 2);
-            DrawString(_font, new Vector2(-9, 5), d.Mode switch { ModeId.Tram => "T", ModeId.Metro => "U", ModeId.SBahn => "S", _ => "B" }, HorizontalAlignment.Center, 18, 12, Colors.White);
+            DrawString(_font, new Vector2(-9, 5), d.Mode switch { ModeId.Tram => "T", ModeId.Metro => "U", ModeId.SBahn => "S", ModeId.Train => "R", _ => "B" }, HorizontalAlignment.Center, 18, 12, Colors.White);
         }
         DrawSetTransform(Vector2.Zero);
     }
@@ -296,7 +296,29 @@ public partial class NetworkLayer : Node2D
             float r = stopR + (sel || hover ? 2 : 0);
             var ring = UI.DraftStops.Any(d => d.Id == s.Id) ? Palette.Ink
                 : lineColor.TryGetValue(s.Id, out var c) ? c : new Color("555555");
-            if (s.Mode == ModeId.SBahn)
+            if (s.Portal)
+            {
+                // Exit to the region: dark tag with an arrow pointing out of the map, name always shown
+                var dir = new Vector2((float)s.Pos.X, (float)s.Pos.Y).Normalized();
+                DrawCircle(Vector2.Zero, r + 4, ring);
+                DrawCircle(Vector2.Zero, r + 2, new Color("37474f"));
+                DrawLine(-dir * (r - 1), dir * (r - 1), Colors.White, 2.5f);
+                DrawLine(dir * (r - 1), dir * (r - 1) - dir.Rotated(0.6f) * 5, Colors.White, 2.5f);
+                DrawLine(dir * (r - 1), dir * (r - 1) - dir.Rotated(-0.6f) * 5, Colors.White, 2.5f);
+                var size = _font.GetStringSize(s.Name, HorizontalAlignment.Left, -1, 12);
+                var at = new Vector2(-size.X / 2, -r - 10);
+                DrawStringOutline(_font, at, s.Name, HorizontalAlignment.Left, -1, 12, 4, new Color(1, 1, 1, 0.9f));
+                DrawString(_font, at, s.Name, HorizontalAlignment.Left, -1, 12, new Color("263238"));
+            }
+            else if (s.Mode == ModeId.Train)
+            {
+                // Regional station: dark slate circle with a white R
+                float m = r + 2.5f;
+                DrawCircle(Vector2.Zero, m + 1.5f, ring);
+                DrawCircle(Vector2.Zero, m, new Color("37474f"));
+                DrawString(_font, new Vector2(-m, 4.5f), "R", HorizontalAlignment.Center, 2 * m, 12, Colors.White);
+            }
+            else if (s.Mode == ModeId.SBahn)
             {
                 // S-Bahnhof: green circle with a white S, ringed in the line color
                 float m = r + 2;

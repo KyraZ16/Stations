@@ -122,4 +122,56 @@ public static class DemoNetwork
         game.HireMissingDrivers();
         return line;
     }
+
+    /// <summary>
+    /// Sample regional line (dev shortcut and tests): between the two exits whose railway route passes closest to
+    /// the city center, with stations near the center, a depot on the way, line RE1.
+    /// </summary>
+    public static TransitLine? BuildRegional(Game game)
+    {
+        game.EnsurePortals();
+        var portals = game.Portals.ToList();
+        RouteResult? best = null;
+        (Stop A, Stop B)? pair = null;
+        double bestD = double.PositiveInfinity;
+        for (int i = 0; i < portals.Count; i++)
+        for (int j = i + 1; j < portals.Count; j++)
+        {
+            var r = game.RouteFor(ModeId.Train, portals[i].Pos, portals[j].Pos);
+            if (r == null || r.Xs.Count < 2) continue;
+            double d = Enumerable.Range(0, r.Xs.Count).Min(k => Util.Hypot(r.Xs[k], r.Ys[k]));
+            if (d < bestD) { bestD = d; best = r; pair = (portals[i], portals[j]); }
+        }
+        if (best == null || pair == null) return null;
+        var ids = new List<int> { pair.Value.A.Id };
+        // stations every ~1.8 km along the route, starting near the center and keeping clear of the exits
+        int center = Enumerable.Range(0, best.Xs.Count).MinBy(k => Util.Hypot(best.Xs[k], best.Ys[k]));
+        var picks = new List<int> { center };
+        double acc = 0;
+        for (int k = center + 1; k < best.Xs.Count; k++)
+        {
+            acc += Util.Hypot(best.Xs[k] - best.Xs[k - 1], best.Ys[k] - best.Ys[k - 1]);
+            if (acc >= 1800) { picks.Add(k); acc = 0; }
+        }
+        acc = 0;
+        for (int k = center - 1; k >= 0; k--)
+        {
+            acc += Util.Hypot(best.Xs[k + 1] - best.Xs[k], best.Ys[k + 1] - best.Ys[k]);
+            if (acc >= 1800) { picks.Add(k); acc = 0; }
+        }
+        foreach (int k in picks.OrderBy(k => k))
+        {
+            double toPortals = Math.Min(Util.Hypot(best.Xs[k] - pair.Value.A.Pos.X, best.Ys[k] - pair.Value.A.Pos.Y),
+                Util.Hypot(best.Xs[k] - pair.Value.B.Pos.X, best.Ys[k] - pair.Value.B.Pos.Y));
+            if (toPortals < 1000) continue;
+            if (game.SnapFor(ModeId.Train, best.Xs[k], best.Ys[k], 5) is RoadPos p && game.AddStop(p, ModeId.Train) is Stop st) ids.Add(st.Id);
+        }
+        ids.Add(pair.Value.B.Id);
+        int dk = best.Xs.Count / 4;
+        if (game.SnapFor(ModeId.Train, best.Xs[dk], best.Ys[dk], 5) is RoadPos dp) game.AddDepot(dp, ModeId.Train);
+        var line = game.CreateLine(ids, false, ModeId.Train);
+        if (line != null) game.AssignMissing(line);
+        game.HireMissingDrivers();
+        return line;
+    }
 }

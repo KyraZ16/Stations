@@ -44,6 +44,8 @@ public sealed class SaveData
         public ModeId Mode { get; set; }
         public double X { get; set; }
         public double Y { get; set; }
+        /// <summary>Regional exit at the map edge (stops only).</summary>
+        public bool Portal { get; set; }
         /// <summary>Depot yard (depots only).</summary>
         public DepotLayout? Layout { get; set; }
     }
@@ -119,7 +121,7 @@ public sealed partial class Game
             Sandbox = Sandbox,
             NextId = _nextId,
             VehicleCounter = _vehicleCounter,
-            Stops = Stops.Values.Select(s => new SaveData.PlacedDto { Id = s.Id, Name = s.Name, Mode = s.Mode, X = s.Pos.X, Y = s.Pos.Y }).ToList(),
+            Stops = Stops.Values.Select(s => new SaveData.PlacedDto { Id = s.Id, Name = s.Name, Mode = s.Mode, X = s.Pos.X, Y = s.Pos.Y, Portal = s.Portal }).ToList(),
             Depots = Depots.Values.Select(d => new SaveData.PlacedDto { Id = d.Id, Name = d.Name, Mode = d.Mode, X = d.Pos.X, Y = d.Pos.Y, Layout = d.Layout }).ToList(),
             Lines = Lines.Values.Select(l => new SaveData.LineDto
             {
@@ -176,7 +178,7 @@ public sealed partial class Game
         foreach (var s in data.Stops)
         {
             if (g.SnapFor(s.Mode, s.X, s.Y, 60) is RoadPos pos)
-                g.Stops[s.Id] = new Stop { Id = s.Id, Name = s.Name, Mode = s.Mode, Pos = pos };
+                g.Stops[s.Id] = new Stop { Id = s.Id, Name = s.Name, Mode = s.Mode, Pos = pos, Portal = s.Portal };
         }
         foreach (var d in data.Depots)
         {

@@ -73,6 +73,11 @@ public static class Modes
         Id = "sbahn", LifeKm = 20000, RepairCostPerPercent = 3500, Description = "66 m · 500 Plätze · 100 km/h, Einstieg an allen Türen",
     };
 
+    private static readonly VehicleDef Regionalzug = new("Regionalzug", 450, 140 / 3.6, 12_000_000, 180, 10, 75, 3)
+    {
+        Id = "regio", LifeKm = 25000, RepairCostPerPercent = 4000, Description = "75 m · 450 Plätze · 140 km/h, Doppelstock",
+    };
+
     private static readonly VehicleDef Niederflurtram = new("Niederflurtram", 180, 60 / 3.6, 2_500_000, 25, 2, 30, 2.4)
     {
         Id = "niederflurtram", LifeKm = 12000, RepairCostPerPercent = 1500, Description = "30 m · 180 Plätze",
@@ -95,8 +100,8 @@ public static class Modes
             15_000_000, 25_000_000, 30_000),
         [ModeId.SBahn] = new(ModeId.SBahn, "S-Bahn", Tier.City, "Ⓢ", true, Infra.Rail, SBahnZug, new[] { SBahnZug },
             8_000_000, 25_000_000, 12_000),
-        [ModeId.Train] = new(ModeId.Train, "Regionalzug", Tier.Regional, "🚆", false, Infra.Rail,
-            new VehicleDef("Triebwagen", 500, 160 / 3.6, 12_000_000, 180, 10, 120, 3), Array.Empty<VehicleDef>(), 5_000_000, 30_000_000),
+        [ModeId.Train] = new(ModeId.Train, "Regionalzug", Tier.Regional, "🚆", true, Infra.Rail, Regionalzug, new[] { Regionalzug },
+            10_000_000, 30_000_000, 12_000),
     };
 
     public static ModeDef Get(ModeId id) => All[id];

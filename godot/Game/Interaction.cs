@@ -69,6 +69,12 @@ public partial class Interaction : Node
         (Tool.Bulldoze, "Abreißen", "✕", Key.X, false),
     };
 
+    /// <summary>Word for a station of a network mode.</summary>
+    public static string StationWord(ModeId mode) => mode switch
+    {
+        ModeId.Metro => "U-Bahnhof", ModeId.SBahn => "S-Bahnhof", ModeId.Train => "Regionalbahnhof", _ => "Haltestelle",
+    };
+
     public static string Hint(Tool t, ModeId mode) => t switch
     {
         Tool.Track when Game.IsMetro(mode) => "Punkte nacheinander anklicken – der Tunnel verläuft gerade, unabhängig von Straßen · an bestehende Tunnel andocken · Rechtsklick/Esc: neu ansetzen",
@@ -76,8 +82,9 @@ public partial class Interaction : Node
         Tool.Depot when Game.IsMetro(mode) => "Klicke auf einen Tunnel, um einen U-Bahn-Betriebshof zu bauen",
         Tool.Line when Game.IsMetro(mode) => "U-Bahnhöfe nacheinander anklicken (auf Tunneln entstehen neue) · Enter: fertig · Rechtsklick: letzten entfernen",
         Tool.Track when Game.IsRail(mode) => "Punkte nacheinander anklicken – neue Gleise verlaufen gerade und docken an die Bahnstrecken an · Rechtsklick/Esc: neu ansetzen",
-        Tool.Stop when Game.IsRail(mode) => "Klicke auf eine Bahnstrecke (hervorgehoben), um einen S-Bahnhof zu setzen",
-        Tool.Depot when Game.IsRail(mode) => "Klicke auf eine Bahnstrecke, um einen S-Bahn-Betriebshof zu bauen",
+        Tool.Stop when Game.IsRail(mode) => $"Klicke auf eine Bahnstrecke (hervorgehoben), um einen {StationWord(mode)} zu setzen",
+        Tool.Depot when Game.IsRail(mode) => $"Klicke auf eine Bahnstrecke, um einen {(mode == ModeId.Train ? "Regio" : "S-Bahn")}-Betriebshof zu bauen",
+        Tool.Line when mode == ModeId.Train => "Ausfahrten am Kartenrand und Bahnhöfe nacheinander anklicken – Regionallinien verbinden das Umland mit der Stadt · Enter: fertig",
         Tool.Line when Game.IsRail(mode) => "S-Bahnhöfe nacheinander anklicken (auf Bahnstrecken entstehen neue) · Enter: fertig · Rechtsklick: letzten entfernen",
         Tool.Select => "Klick: Auswählen · Ziehen: Verschieben · Mausrad: Zoomen · Leertaste: Pause · F5: Speichern",
         Tool.Stop => "Klicke auf eine Straße, um eine Haltestelle zu setzen · Rechtsklick: zurück",
@@ -144,6 +151,8 @@ public partial class Interaction : Node
         SetTool(Tool is Tool.Track or Tool.Edit ? Tool.Select : Tool);
         if (ModeUsesTracks && Game.Tracks.Count == 0)
             Toast("Trams brauchen Gleise: baue sie mit „Gleise bauen“ (G) auf Straßen");
+        if (Mode == ModeId.Train && Game.EnsurePortals() > 0 && !Game.Lines.Values.Any(l => l.Mode == ModeId.Train))
+            Toast("Regionalzüge bringen Pendler aus dem Umland: zeichne eine Linie von einer Ausfahrt am Kartenrand zu Bahnhöfen in der Stadt");
         if (Game.IsMetro(Mode) && Game.Metro.Edges.Count == 0)
             Toast("U-Bahnen fahren in Tunneln: baue sie mit „Tunnel bauen“ (G) frei durch die Stadt");
     }
@@ -276,7 +285,7 @@ public partial class Interaction : Node
     private RoadPos? SnapBuild(ModeId mode, double x, double y)
     {
         var pos = Game.SnapFor(mode, x, y, SnapDist);
-        if (pos == null) Toast(Game.IsMetro(mode) ? NeedsTunnel : Game.IsRail(mode) ? "Hier liegt keine Bahnstrecke – S-Bahnhöfe kommen auf die hervorgehobenen Gleise" : Game.UsesTracks(mode) ? NeedsTrack : "Hier ist keine befahrbare Straße", true);
+        if (pos == null) Toast(Game.IsMetro(mode) ? NeedsTunnel : Game.IsRail(mode) ? $"Hier liegt keine Bahnstrecke – {StationWord(mode)}e kommen auf die hervorgehobenen Gleise" : Game.UsesTracks(mode) ? NeedsTrack : "Hier ist keine befahrbare Straße", true);
         return pos;
     }
 
@@ -356,6 +365,7 @@ public partial class Interaction : Node
         Select(new("line", line.Id));
         bool tram = line.Mode == ModeId.Tram;
         bool metro = Game.UsesNet(line.Mode);
+        string depotWord = line.Mode switch { ModeId.Train => "Regio-Betriebshof", ModeId.SBahn => "S-Bahn-Betriebshof", ModeId.Metro => "U-Bahn-Betriebshof", _ => "" };
         if (Game.Depots.Values.Any(d => d.Mode == line.Mode))
         {
             // Equip the line for its default timetable: vehicles for the peak, drivers for the shifts.
@@ -367,7 +377,7 @@ public partial class Interaction : Node
         }
         else
         {
-            Toast($"Linie {line.Name} erstellt – baue einen {(line.Mode == ModeId.SBahn ? "S-Bahn-Betriebshof" : metro ? "U-Bahn-Betriebshof" : tram ? "Tram-Betriebshof" : "Betriebshof")}, um Fahrzeuge einzusetzen");
+            Toast($"Linie {line.Name} erstellt – baue einen {(metro ? depotWord : tram ? "Tram-Betriebshof" : "Betriebshof")}, um Fahrzeuge einzusetzen");
         }
     }
 

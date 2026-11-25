@@ -13,7 +13,7 @@ public sealed record TunnelPlan(double X1, double Y1, double X2, double Y2, doub
 public sealed partial class Game
 {
     public const double MetroSpeed = 80 / 3.6;
-    public const double RailSpeed = 100 / 3.6;
+    public const double RailSpeed = 140 / 3.6; // line speed; S-Bahn trains are limited to 100 km/h by the vehicle
     private const double MinPiece = 40; // m
 
     public readonly TrackNet Metro = new(MetroSpeed);
@@ -25,14 +25,15 @@ public sealed partial class Game
     public int MetroVersion => Metro.Version;
 
     public static bool IsMetro(ModeId mode) => Modes.Get(mode).Infra == Infra.Metro;
-    public static bool IsRail(ModeId mode) => mode == ModeId.SBahn;
+    /// <summary>S-Bahn and regional trains share the railway.</summary>
+    public static bool IsRail(ModeId mode) => mode is ModeId.SBahn or ModeId.Train;
     /// <summary>Modes that run on a network of their own (tunnels or railway) instead of streets.</summary>
     public static bool UsesNet(ModeId mode) => IsMetro(mode) || IsRail(mode);
 
     public TrackNet? NetFor(ModeId mode) => IsMetro(mode) ? Metro : IsRail(mode) ? Rail : null;
 
     /// <summary>Minimum distance between two stations of a network mode.</summary>
-    public static double MinStationGap(ModeId mode) => IsRail(mode) ? 400 : 250;
+    public static double MinStationGap(ModeId mode) => mode switch { ModeId.Train => 1000, ModeId.SBahn => 400, _ => 250 };
 
     public double TunnelLength => Metro.Length();
 

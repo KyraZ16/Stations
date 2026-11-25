@@ -118,7 +118,7 @@ public sealed class Props
         return mode switch
         {
             ModeId.Tram => Tram(def, color, wheels),
-            ModeId.Metro or ModeId.SBahn => Tram(def, color, wheels, metro: true),
+            ModeId.Metro or ModeId.SBahn or ModeId.Train => Tram(def, color, wheels, metro: true),
             _ => Bus(def, color, wheels),
         };
     }
@@ -198,7 +198,7 @@ public sealed class Props
         var n = new Node3D();
         var paint = Paint(color);
         var white = Paint("f2f2ee");
-        int sections = metro ? (L > 50 ? 3 : 2) : 3;
+        int sections = metro ? (L > 70 ? 4 : L > 50 ? 3 : 2) : 3;
         float gap = 0.5f, seg = (L - gap * (sections - 1)) / sections;
         for (int s = 0; s < sections; s++)
         {

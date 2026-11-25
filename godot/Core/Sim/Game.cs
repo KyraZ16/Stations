@@ -225,7 +225,7 @@ public sealed partial class Game
     {
         if (StopAt(pos.X, pos.Y, UsesNet(mode) ? MinStationGap(mode) : 30, mode) != null)
         {
-            Notify(UsesNet(mode) ? $"Zu nah an einem anderen {(IsMetro(mode) ? "U" : "S")}-Bahnhof (mindestens {MinStationGap(mode):F0} m)" : "Zu nah an einer anderen Haltestelle", true);
+            Notify(UsesNet(mode) ? $"Zu nah an einem anderen {(IsMetro(mode) ? "U-Bahnhof" : mode == ModeId.Train ? "Regionalbahnhof" : "S-Bahnhof")} (mindestens {MinStationGap(mode):F0} m)" : "Zu nah an einer anderen Haltestelle", true);
             return null;
         }
         if (NetFor(mode) is TrackNet sn && (pos.Seg < 0 || pos.Seg >= sn.Graph.SegmentCount))
@@ -241,7 +241,7 @@ public sealed partial class Game
         if (!Pay(Modes.Get(mode).StopCost)) return null;
         int id = _nextId++;
         string street = StreetName(pos, mode);
-        var stop = new Stop { Id = id, Mode = mode, Pos = pos, Name = UniqueStopName(street != "" ? street : IsMetro(mode) ? $"U-Bahnhof {id}" : IsRail(mode) ? $"S-Bahnhof {id}" : $"Haltestelle {id}", mode) };
+        var stop = new Stop { Id = id, Mode = mode, Pos = pos, Name = UniqueStopName(street != "" ? street : IsMetro(mode) ? $"U-Bahnhof {id}" : mode == ModeId.Train ? $"Bahnhof {id}" : IsRail(mode) ? $"S-Bahnhof {id}" : $"Haltestelle {id}", mode) };
         Stops[id] = stop;
         OnChange();
         return stop;
@@ -250,6 +250,11 @@ public sealed partial class Game
     public void RemoveStop(int id)
     {
         if (!Stops.TryGetValue(id, out var stop)) return;
+        if (stop.Portal)
+        {
+            Notify("Ausfahrten ins Umland lassen sich nicht abreißen", true);
+            return;
+        }
         Today.Lost += stop.Waiting.Count;
         Stops.Remove(id);
         foreach (var line in Lines.Values.ToList())
@@ -286,7 +291,7 @@ public sealed partial class Game
         if (!Pay(Modes.Get(mode).DepotCost)) return null;
         int id = _nextId++;
         string street = StreetName(pos, mode);
-        string kind = mode switch { ModeId.Tram => "Tram-Betriebshof", ModeId.Metro => "U-Bahn-Betriebshof", ModeId.SBahn => "S-Bahn-Betriebshof", _ => "Betriebshof" };
+        string kind = mode switch { ModeId.Tram => "Tram-Betriebshof", ModeId.Metro => "U-Bahn-Betriebshof", ModeId.SBahn => "S-Bahn-Betriebshof", ModeId.Train => "Regio-Betriebshof", _ => "Betriebshof" };
         var depot = new Depot
         {
             Id = id, Mode = mode, Pos = pos, Name = street != "" ? $"{kind} {street}" : $"{kind} {id}",

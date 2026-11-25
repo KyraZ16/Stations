@@ -10,6 +10,8 @@ public sealed class Stop
     public RoadPos Pos;
     public List<Passenger> Waiting = new();
     public int BoardedToday;
+    /// <summary>Regional exit at the map edge: stands for the region beyond (not built, not removable).</summary>
+    public bool Portal;
 }
 
 public sealed class Depot
@@ -230,6 +232,7 @@ public sealed class DayStats
     public double Revenue { get; set; }
     public double Costs { get; set; }
     public int Customers { get; set; } // served at a customer center
+    public int Regional { get; set; } // trips to or from the region beyond the map
     public int CustomersLost { get; set; } // left the customer center after waiting too long
     public double WaitSum { get; set; }
 }

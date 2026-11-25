@@ -79,6 +79,7 @@ public sealed partial class Game
         }
 
         GenerateDemand(dt);
+        GenerateRegionalDemand(dt);
         foreach (var v in Vehicles.Values) StepVehicle(v, dt);
         StepPeople(dt);
 
@@ -388,9 +389,10 @@ public sealed partial class Game
                         if (p.LegIdx == 0)
                         {
                             paying++;
-                            Money += Fare;
-                            Today.Revenue += Fare;
-                            line.RevenueToday += Fare;
+                            double fare = line.Mode == ModeId.Train ? RegionalFare : Fare;
+                            Money += fare;
+                            Today.Revenue += fare;
+                            line.RevenueToday += fare;
                         }
                     }
                     else
@@ -405,7 +407,7 @@ public sealed partial class Game
         v.V = 0;
         // Paying passengers take longer to board, depending on how they can pay (see research)
         v.DwellUntil = UsesNet(v.Mode)
-            ? Time + (k == 0 ? 15 : 20) + moves * 0.3 // many doors, tickets from the station machines
+            ? Time + (k == 0 ? 15 : v.Mode == ModeId.Train ? 30 : 20) + moves * 0.3 // many doors, tickets from the station machines
             : Time + (k == 0 ? 12 : 7) + (moves - paying) * 1.2 + paying * BoardSeconds;
     }
 

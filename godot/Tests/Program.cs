@@ -425,5 +425,24 @@ Check(s1.StopIds.Sum(id => sg.Stops[id].BoardedToday) > 0, $"Fahrgäste fahren S
 var sRest = Game.Restore(map, SaveData.FromJson(sg.Serialize().ToJson()));
 Check(sRest.Rail.Edges.Count(e => e.Built) == 1 && sRest.Lines.Values.Any(l => l.Name == "S1" && l.StopIds.Count == s1.StopIds.Count), "S-Bahn und eigene Gleise werden gespeichert");
 
+Console.WriteLine("== Regionalzüge");
+var rgx = new Game(map, sandbox: true, seed: 51);
+DemoNetwork.Build(rgx);
+int exits = rgx.EnsurePortals();
+Check(exits >= 2, $"Ausfahrten am Kartenrand: {string.Join(", ", rgx.Portals.Select(p => p.Name))}");
+Check(rgx.EnsurePortals() == exits, "Ausfahrten entstehen nur einmal");
+var re1 = DemoNetwork.BuildRegional(rgx);
+Check(re1 != null && re1.Name == "RE1" && rgx.Stops[re1.StopIds[0]].Portal && rgx.Stops[re1.StopIds[^1]].Portal,
+    $"RE1 von Ausfahrt zu Ausfahrt ({string.Join(" – ", re1?.StopIds.Select(id => rgx.Stops[id].Name) ?? new List<string>())})");
+Check(rgx.VehiclesOf(re1!).Count > 0 && rgx.VehiclesOf(re1!).All(v => v.ModelId == "regio"), $"{rgx.VehiclesOf(re1!).Count} Regionalzüge");
+double revBefore = rgx.Today.Revenue;
+rgx.Advance(4 * 3600);
+Check(rgx.Today.Regional > 50, $"Pendler aus dem Umland ({rgx.Today.Regional} Fahrten bis 09:00)");
+Check(re1!.RevenueToday >= rgx.Stops[re1.StopIds[0]].BoardedToday * Game.RegionalFare * 0.9 && re1.RevenueToday > 0, $"Regionalticket {Game.RegionalFare:F0} € (RE1 heute {re1.RevenueToday:F0} €)");
+rgx.RemoveStop(re1.StopIds[0]);
+Check(rgx.Stops.ContainsKey(re1.StopIds[0]), "Ausfahrten lassen sich nicht abreißen");
+var reRest = Game.Restore(map, SaveData.FromJson(rgx.Serialize().ToJson()));
+Check(reRest.Portals.Count() == exits && reRest.Lines.Values.Any(l => l.Name == "RE1"), "Ausfahrten und RE1 werden gespeichert");
+
 Console.WriteLine(failures == 0 ? "\nAlle Prüfungen bestanden." : $"\n{failures} Prüfung(en) fehlgeschlagen.");
 return failures == 0 ? 0 : 1;

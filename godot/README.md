@@ -23,6 +23,7 @@ Nach `--` auf der Kommandozeile, z. B.
 `Godot_v4.7.2-stable_mono_win64.exe --path godot/Game -- --autostart --demo`:
 
 - `--autostart` startet direkt Hamburg (Sandbox)
+- `--regional` baut zusätzlich eine Beispiel-Regionallinie (RE1 zwischen zwei Ausfahrten durch die Mitte); `--depot=regional` öffnet ihren Betriebshof
 - `--sbahn` baut zusätzlich eine Beispiel-S-Bahn (S1 entlang der längsten Bahnstrecke); `--depot=sbahn` öffnet ihren Betriebshof
 - `--metro` baut zusätzlich eine Beispiel-U-Bahn (U1) und wechselt auf „Stadtweit“; `--depot=metro` öffnet ihren Betriebshof
 - `--demo` baut ein Beispielnetz und spult auf 08:00 (im Spiel auch per **F9**)
@@ -51,4 +52,5 @@ Nach `--` auf der Kommandozeile, z. B.
 - [x] Forschung: Punkte aus dem Betrieb (2 je 100 Einstiege, 0,5 je Kunde im Kundencenter) starten Projekte, die dann Forscher-Stunden brauchen; Forscher sitzen im frei aufziehbaren Planungsbüro (Früh-/Spätschicht), mehr Forscher = schneller fertig. Bezahlstufen 1–4 (Bargeld beim Fahrer → Karte am Automaten → kontaktlos am Automaten + Automat im Fahrzeug → kontaktlos im Fahrzeug) beschleunigen den Einstieg und bringen bis zu +10 % Fahrgäste; außerdem Werkstatt-Diagnose, Reinigungsplan, Abo-Marketing. Gelenkbus (mit Gelenkbus-Stellplatz), Ladestation und E-Bus werden erst erforscht (gesperrt mit 🔒; alte Spielstände behalten, was sie schon nutzen). Knopf „Forschung“ in der Kopfleiste
 - [x] U-Bahn (Stadtweit): Tunnel frei durch die Stadt bauen (G, gerade Stücke von Punkt zu Punkt, Andocken an bestehende Tunnel, 30.000 €/m), U-Bahnhöfe (H, 800 m Einzugsgebiet, mindestens 250 m Abstand) und U-Bahn-Betriebshof (B) auf Tunneln, Linien U1, U2 …; Züge (40 m, 330 Plätze, 80 km/h) mit schnellem Einstieg an allen Türen; Umstieg zu Bus und Tram zu Fuß; 3D-Hof mit 42-m-Abstellgleisen
 - [x] S-Bahn (Stadtweit): fährt auf den echten Bahnstrecken der Karte (OSM rail/light_rail ohne Abstell- und Rangiergleise; im S-Bahn-Modus grün hervorgehoben), eigene Gleise frei dazubauen (G, 12.000 €/m, nur diese lassen sich abreißen), S-Bahnhöfe (1000 m Einzugsgebiet, 400 m Abstand), Linien S1, S2 …, Züge 66 m / 500 Plätze / 100 km/h, Betriebshof mit 69-m-Abstellgleisen
-- [ ] Regionalzüge, Kampagne
+- [x] Regionalzüge (Regional): Ausfahrten entstehen automatisch, wo die Bahn die Karte verlässt (z. B. „Ausfahrt Nordwest“); jede von einer Regionallinie bediente Ausfahrt bringt Pendler aus dem Umland (rund 2500 Fahrten am Tag, morgens in die Stadt, abends zurück), die in der Stadt umsteigen; Regionalticket 8 €; Regionalbahnhöfe (1200 m Einzugsgebiet, 1 km Abstand), Linien RE1, RE2 …, Züge 75 m / 450 Plätze / 140 km/h, Regio-Betriebshof mit 78-m-Abstellgleisen; teilt die Gleise mit der S-Bahn
+- [ ] Kampagne
